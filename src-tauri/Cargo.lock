@@ -3,6 +3,21 @@
 version = 4
 
 [[package]]
+name = "DJ-PRO"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tokio",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -855,21 +870,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "dj-pro"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "serde",
- "serde_json",
- "symphonia",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tokio",
 ]
 
 [[package]]
