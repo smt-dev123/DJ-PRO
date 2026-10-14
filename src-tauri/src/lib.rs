@@ -2,18 +2,20 @@ pub mod audio;
 pub mod commands;
 
 use audio::AudioEngine;
+use audio::state::MixerState;
 use commands::*;
+use std::sync::{Arc, Mutex};
 
 pub fn run() {
     let engine = AudioEngine::new().expect("Failed to initialize audio engine");
-    let shared_state = engine.state.clone();
+    let shared_state: Arc<Mutex<MixerState>> = engine.state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(shared_state)
-        .manage(engine)
         .invoke_handler(tauri::generate_handler![
-            load_track,
+            load_track_fast,
+            get_waveform,
             toggle_play,
             set_deck_volume,
             set_crossfader,

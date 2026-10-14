@@ -46,9 +46,7 @@ function toggleLoop(beats: string) {
 
 function handleDragOver(e: DragEvent) {
   e.preventDefault();
-  if (e.dataTransfer) {
-    e.dataTransfer.dropEffect = "copy";
-  }
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
   isDragOver.value = true;
 }
 
@@ -85,7 +83,7 @@ function handleDrop(e: DragEvent) {
   }
 }
 
-// ================= DJAY PRO DECK WAVE SCRUBBER =================
+// ================= SCRUBBER =================
 function handleScrubberMouseDown(e: MouseEvent) {
   e.preventDefault();
   const target = e.currentTarget as HTMLElement;
@@ -112,17 +110,14 @@ function handleScrubberMouseDown(e: MouseEvent) {
   window.addEventListener("mouseup", onMouseUp);
 }
 
-// ================= WAVEFORM SAMPLING (FIXED HIGH COUNT) =================
-// ✅ Bar count ថេរ — ល្អិតខ្លាំង មិនគណនាតាម width
-const BAR_COUNT = 1500;
+// ================= WAVEFORM SAMPLING =================
+const BAR_COUNT = 600;
 
 const waveformBars = computed<WaveBand[]>(() => {
   const count = BAR_COUNT;
   const source = props.deck.waveform;
 
-  // ✅ បើមាន waveform data ពិត
   if (source && source.length > 0) {
-    // បើ data តិចជាង count → interpolate ដើម្បីបំពេញ
     if (source.length <= count) {
       if (source.length === count) return source;
       const interpolated: WaveBand[] = [];
@@ -145,8 +140,6 @@ const waveformBars = computed<WaveBand[]>(() => {
       }
       return interpolated;
     }
-
-    // បើ data ច្រើនជាង count → sample តាម step
     const step = source.length / count;
     const sampled: WaveBand[] = [];
     for (let i = 0; i < count; i++) {
@@ -156,22 +149,46 @@ const waveformBars = computed<WaveBand[]>(() => {
     return sampled;
   }
 
-  // ✅ Fallback ពេលគ្មាន data
+  // ✅ Fallback ពេលគ្មាន waveform (សម្រាប់ progressive loading)
   const fallback: WaveBand[] = [];
   for (let i = 0; i < count; i++) {
-    fallback.push({
-      low: 0.2 + Math.abs(Math.sin(i * 0.15)) * 0.5,
-      mid: 0.15 + Math.abs(Math.cos(i * 0.2)) * 0.45,
-      high: 0.1 + Math.abs(Math.sin(i * 0.35)) * 0.4,
-    });
+    fallback.push({ low: 0.05, mid: 0.03, high: 0.02 });
   }
   return fallback;
 });
 
-// ================= CANVAS WAVEFORM SCRUBBER =================
-const scrubberCanvasRef = ref<HTMLCanvasElement | null>(null);
+// ✅ Expected waveform length (សម្រាប់ progress indicator)
+const expectedWaveformLength = computed(() => {
+  const duration = props.deck.durationSecs || 0;
+  return Math.max(240, Math.min(2400, Math.round(duration * 10)));
+});
 
-// ================= CANVAS WAVEFORM SCRUBBER (KICK DOMINANT + DYNAMIC COLOR) =================
+// ✅ Waveform progress (0-1)
+const waveformProgress = computed(() => {
+  if (expectedWaveformLength.value === 0) return 0;
+  return Math.min(1, props.deck.waveform.length / expectedWaveformLength.value);
+});
+
+// ✅ Is analyzing
+const isAnalyzing = computed(() => {
+  return (
+    props.deck.waveform.length > 0 &&
+    props.deck.waveform.length < expectedWaveformLength.value
+  );
+});
+
+// ================= CANVAS SCRUBBER =================
+const scrubberCanvasRef = ref<HTMLCanvasElement | null>(null);
+let redrawTimer: number | null = null;
+
+function scheduleRedraw() {
+  if (redrawTimer) return;
+  redrawTimer = window.setTimeout(() => {
+    redrawTimer = null;
+    requestAnimationFrame(drawScrubberCanvas);
+  }, 16);
+}
+
 function drawScrubberCanvas() {
   const canvas = scrubberCanvasRef.value;
   if (!canvas) return;
@@ -194,7 +211,6 @@ function drawScrubberCanvas() {
   ctx.save();
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Background ស្រាលបន្តិច
   ctx.fillStyle = "#0a0d14";
   ctx.fillRect(0, 0, cssWidth, cssHeight);
 
@@ -207,13 +223,10 @@ function drawScrubberCanvas() {
 
   const centerY = cssHeight / 2;
   const maxAmp = cssHeight / 2 - 4;
-
-  // Bar width ល្អិត + Gap តូច
   const barWidth = cssWidth / numBars;
   const gap = Math.max(0.15, barWidth * 0.10);
   const actualBarWidth = Math.max(0.3, barWidth - gap);
 
-  // ✅ គណនា global peaks
   let globalKick = 0.01;
   let globalSnare = 0.01;
   let globalClap = 0.01;
@@ -225,62 +238,39 @@ function drawScrubberCanvas() {
     if (band.high > globalClap) globalClap = band.high;
   }
 
-  // ================= DRAW WAVEFORM (KICK DOMINANT + DYNAMIC COLOR) =================
   for (let i = 0; i < numBars; i++) {
     const band = bands[i];
     const x = i * barWidth;
     const isPlayed = i / numBars <= props.deck.progress;
-    const alpha = isPlayed ? 1.0 : 0.85;
+    const alpha = isPlayed ? 1.0 : 0.65;
 
-    // ✅ Kick DOMINANT — low frequency ជាធំ
     const kickNorm = band.low / globalKick;
     const snareNorm = band.mid / globalSnare;
     const clapNorm = band.high / globalClap;
 
-    // ✅ គណនា amplitude ផ្អែកលើ Kick ជាចម្បង
-    //    Kick = 100%, Snare = 40%, Clap = 20%
-    const amp = Math.max(
-      kickNorm * 1.0,
-      snareNorm * 0.40,
-      clapNorm * 0.20
-    );
-
-    // ✅ Normalize តាម contrast
-    let normalized = Math.pow(amp, 0.75);
+    const amp = Math.max(kickNorm * 1.0, snareNorm * 0.40, clapNorm * 0.20);
+    const normalized = Math.pow(amp, 0.75);
     const h = Math.max(0.8, normalized * maxAmp);
 
-    // ✅ កំណត់ពណ៌តាម frequency content ពិត
-    //    បើ Kick ខ្លាំង → ក្រហម
-    //    បើ Vocal ខ្លាំង (mid ខ្ពស់) → លឿង
-    //    បើ Midi ខ្លាំង (high ខ្ពស់) → ស្វាយ/ខៀវ
-
-    const kickStrength = kickNorm * 1.0;
-    const vocalStrength = snareNorm * 1.0; // mid = vocal
-    const midiStrength = clapNorm * 1.0;   // high = hi-hat/midi
-
+    const kickStrength = kickNorm;
+    const vocalStrength = snareNorm;
+    const midiStrength = clapNorm;
     const maxStrength = Math.max(kickStrength, vocalStrength, midiStrength);
 
     let barColor: string;
 
     if (maxStrength < 0.2) {
-      // Quiet — ពណ៌ប្រផេះងងឹត
       barColor = "#1e293b";
     } else if (kickStrength === maxStrength && kickStrength > 0.5) {
-      // ✅ Kick ខ្លាំង → ក្រហម
       barColor = "#ef4444";
     } else if (vocalStrength === maxStrength && vocalStrength > 0.5) {
-      // ✅ Vocal ខ្លាំង → លឿង (សំឡេងច្រៀង)
       barColor = "#eab308";
     } else if (midiStrength === maxStrength && midiStrength > 0.5) {
-      // ✅ Midi ខ្លាំង → ស្វាយ (មេឌី)
       barColor = "#a855f7";
     } else {
-      // Blend ពណ៌តាម frequency ពិត
       const r = Math.round(kickNorm * 239);
       const g = Math.round(vocalStrength * 180);
       const b = Math.round(midiStrength * 246);
-
-      // ✅ បង្កើនពន្លឺបើ amplitude ខ្ពស់
       const brightness = 0.6 + normalized * 0.4;
       barColor = `rgb(${Math.round(r * brightness)}, ${Math.round(g * brightness)}, ${Math.round(b * brightness)})`;
     }
@@ -292,32 +282,7 @@ function drawScrubberCanvas() {
     ctx.restore();
   }
 
-  // ================= HIGHLIGHT: Kick peaks ភ្លឺ =================
-  for (let i = 0; i < numBars; i++) {
-    const band = bands[i];
-    const x = i * barWidth;
-    const isPlayed = i / numBars <= props.deck.progress;
-    const alpha = isPlayed ? 1.0 : 0.35;
-
-    const kickNorm = band.low / globalKick;
-    if (kickNorm > 0.75) {
-      const amp = Math.max(
-        kickNorm * 1.0,
-        (band.mid / globalSnare) * 0.40,
-        (band.high / globalClap) * 0.20
-      );
-      const normalized = Math.pow(amp, 0.75);
-      const h = Math.max(0.8, normalized * maxAmp);
-
-      ctx.save();
-      ctx.globalAlpha = alpha * 0.5;
-      ctx.fillStyle = "#fca5a5"; // Highlight ភ្លឺ
-      ctx.fillRect(x, centerY - h, actualBarWidth, h * 0.35);
-      ctx.restore();
-    }
-  }
-
-  // ================= CENTER SPINE =================
+  // Center spine
   ctx.save();
   ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
   ctx.lineWidth = 0.8;
@@ -327,10 +292,10 @@ function drawScrubberCanvas() {
   ctx.stroke();
   ctx.restore();
 
-  // ================= DIM UNPLAYED =================
+  // Dim unplayed
   if (props.deck.progress < 1) {
     ctx.save();
-    ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
     ctx.fillRect(
       props.deck.progress * cssWidth,
       0,
@@ -343,25 +308,11 @@ function drawScrubberCanvas() {
   ctx.restore();
 }
 
-// ================= WATCHERS =================
-watch(
-  () => props.deck.waveform,
-  () => {
-    requestAnimationFrame(drawScrubberCanvas);
-  },
-  { deep: false }
-);
+watch(() => props.deck.waveform, () => scheduleRedraw(), { deep: false });
+watch(() => props.deck.progress, () => scheduleRedraw());
 
-watch(
-  () => props.deck.progress,
-  () => {
-    requestAnimationFrame(drawScrubberCanvas);
-  }
-);
-
-// ================= LIFECYCLE =================
 function handleResize() {
-  requestAnimationFrame(drawScrubberCanvas);
+  scheduleRedraw();
 }
 
 onMounted(() => {
@@ -370,6 +321,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (redrawTimer) clearTimeout(redrawTimer);
   window.removeEventListener("resize", handleResize);
 });
 
@@ -388,8 +340,14 @@ const remainingTime = computed(() => {
   <div
     class="relative bg-[#0c0d12] border rounded-xl p-2.5 shadow-2xl flex flex-col justify-between h-full select-none font-mono transition-all overflow-hidden"
     :class="[
-      color === 'cyan' ? 'border-cyan-500/30 shadow-cyan-950/20' : 'border-rose-500/30 shadow-rose-950/20',
-      isDragOver ? (color === 'cyan' ? 'ring-2 ring-cyan-400 border-cyan-400' : 'ring-2 ring-rose-400 border-rose-400') : ''
+      color === 'cyan'
+        ? 'border-cyan-500/30 shadow-cyan-950/20'
+        : 'border-rose-500/30 shadow-rose-950/20',
+      isDragOver
+        ? color === 'cyan'
+          ? 'ring-2 ring-cyan-400 border-cyan-400'
+          : 'ring-2 ring-rose-400 border-rose-400'
+        : '',
     ]"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
@@ -399,11 +357,19 @@ const remainingTime = computed(() => {
     <div
       v-if="isDragOver"
       class="absolute inset-0 z-50 rounded-xl backdrop-blur-xs flex flex-col items-center justify-center p-4 border-2 border-dashed pointer-events-none transition-all animate-pulse"
-      :class="color === 'cyan' ? 'bg-cyan-950/90 border-cyan-400 text-cyan-200' : 'bg-rose-950/90 border-rose-400 text-rose-200'"
+      :class="
+        color === 'cyan'
+          ? 'bg-cyan-950/90 border-cyan-400 text-cyan-200'
+          : 'bg-rose-950/90 border-rose-400 text-rose-200'
+      "
     >
       <div
         class="w-12 h-12 rounded-full flex items-center justify-center text-xl mb-2 shadow-lg"
-        :class="color === 'cyan' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400' : 'bg-rose-500/20 text-rose-300 border border-rose-400'"
+        :class="
+          color === 'cyan'
+            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400'
+            : 'bg-rose-500/20 text-rose-300 border border-rose-400'
+        "
       >
         📥
       </div>
@@ -416,21 +382,27 @@ const remainingTime = computed(() => {
     </div>
 
     <!-- ================= 1. DECK TOP HEADER ================= -->
-    <div class="flex items-center justify-between border-b border-zinc-800/80 pb-2 mb-1.5 shrink-0">
+    <div
+      class="flex items-center justify-between border-b border-zinc-800/80 pb-2 mb-1.5 shrink-0"
+    >
       <div class="flex items-center gap-2.5 min-w-0">
         <span
           class="w-2.5 h-2.5 rounded-full shrink-0 shadow-md transition-all"
           :class="[
             deck.isPlaying ? 'animate-pulse' : 'opacity-60',
-            color === 'cyan' ? 'bg-cyan-400 shadow-cyan-400' : 'bg-rose-400 shadow-rose-400'
+            color === 'cyan'
+              ? 'bg-cyan-400 shadow-cyan-400'
+              : 'bg-rose-400 shadow-rose-400',
           ]"
         ></span>
 
         <div
           class="px-2 py-0.5 rounded text-[10px] font-black tracking-widest shrink-0 border"
-          :class="color === 'cyan'
-            ? 'bg-cyan-950/40 border-cyan-500/40 text-cyan-400'
-            : 'bg-rose-950/40 border-rose-500/40 text-rose-400'"
+          :class="
+            color === 'cyan'
+              ? 'bg-cyan-950/40 border-cyan-500/40 text-cyan-400'
+              : 'bg-rose-950/40 border-rose-500/40 text-rose-400'
+          "
         >
           DECK {{ deck.id }}
         </div>
@@ -450,9 +422,13 @@ const remainingTime = computed(() => {
           @click="$emit('keyLock')"
           title="Toggle Master Tempo / Key Lock"
           class="px-2 py-1 rounded text-[8px] font-black border transition-all cursor-pointer"
-          :class="deck.keyLock
-            ? (color === 'cyan' ? 'bg-cyan-950/60 border-cyan-400 text-cyan-300' : 'bg-rose-950/60 border-rose-400 text-rose-300')
-            : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'"
+          :class="
+            deck.keyLock
+              ? color === 'cyan'
+                ? 'bg-cyan-950/60 border-cyan-400 text-cyan-300'
+                : 'bg-rose-950/60 border-rose-400 text-rose-300'
+              : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'
+          "
         >
           KEY LOCK
         </button>
@@ -466,167 +442,245 @@ const remainingTime = computed(() => {
       </div>
     </div>
 
-    <!-- ================= 2. DJAY PRO WAVE SCRUBBER ================= -->
-    <div class="flex flex-col gap-1 mb-1.5 shrink-0">
-      <!-- Header row -->
-      <div class="flex items-center justify-between text-[7px] font-bold text-zinc-400 px-1">
-        <div class="flex items-center gap-1.5 font-mono">
-          <span
-            class="px-1 py-0.5 rounded text-[7px] font-black"
-            :class="color === 'cyan' ? 'bg-cyan-950/70 text-cyan-300 border border-cyan-500/30' : 'bg-rose-950/70 text-rose-300 border border-rose-500/30'"
-          >
-            {{ deck.currentTime }}
-          </span>
-          <span class="text-[6.5px] text-zinc-500 tracking-wider">/ {{ deck.totalTime }}</span>
-        </div>
-
-        <!-- Legend -->
-        <div class="flex items-center gap-2.5 text-[7.5px] font-sans font-semibold">
-          <div class="flex items-center gap-1" title="Kick Drum (ភ្លេងបុក)">
-            <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
-            <span class="text-red-400">KICK</span>
-          </div>
-          <div class="flex items-center gap-1" title="Snare (ស្គរ)">
-            <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-            <span class="text-green-400">SNARE</span>
-          </div>
-          <div class="flex items-center gap-1" title="Clap (ខ្ទាស់ដៃ)">
-            <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-            <span class="text-blue-400">CLAP</span>
-          </div>
-        </div>
-
-        <div class="font-mono text-[7px] font-bold" :class="color === 'cyan' ? 'text-cyan-400' : 'text-rose-400'">
-          {{ remainingTime }}
-        </div>
-      </div>
-
-      <!-- Waveform Scrubber Track (Canvas) -->
-      <div
-        @mousedown="handleScrubberMouseDown"
-        title="Click or drag to scrub/seek"
-        class="h-12 bg-[#050609] border rounded-lg relative cursor-ew-resize group overflow-hidden select-none"
-        :class="color === 'cyan' ? 'border-cyan-500/30 hover:border-cyan-400/80' : 'border-rose-500/30 hover:border-rose-400/80'"
+<!-- ================= 2. DJAY PRO WAVE SCRUBBER ================= -->
+<div class="flex flex-col gap-1 mb-1.5 shrink-0">
+  <!-- Header row -->
+  <div class="flex items-center justify-between text-[7px] font-bold text-zinc-400 px-1">
+    <div class="flex items-center gap-1.5 font-mono">
+      <span
+        class="px-1 py-0.5 rounded text-[7px] font-black"
+        :class="color === 'cyan' ? 'bg-cyan-950/70 text-cyan-300 border border-cyan-500/30' : 'bg-rose-950/70 text-rose-300 border border-rose-500/30'"
       >
-        <canvas
-          ref="scrubberCanvasRef"
-          class="w-full h-full block"
-        ></canvas>
+        {{ deck.currentTime }}
+      </span>
+      <span class="text-[6.5px] text-zinc-500 tracking-wider">/ {{ deck.totalTime }}</span>
+    </div>
 
-        <!-- Hot Cue Markers -->
-        <div
-          v-for="(cuePos, cueIdx) in [0.05, 0.28, 0.52, 0.78]"
-          :key="'cue-flag-' + cueIdx"
-          class="absolute top-0 bottom-0 pointer-events-none z-20 flex flex-col justify-between"
-          :style="{ left: `${cuePos * 100}%` }"
-        >
-          <div
-            class="px-1 py-[0.5px] text-[5.5px] font-black rounded-xs -translate-x-1/2 shadow-sm"
-            :class="color === 'cyan' ? 'bg-cyan-400 text-black' : 'bg-rose-400 text-white'"
-          >
-            {{ cueIdx + 1 }}
-          </div>
-          <div
-            class="w-[1px] h-full opacity-40 -translate-x-1/2"
-            :class="color === 'cyan' ? 'bg-cyan-400' : 'bg-rose-400'"
-          ></div>
-        </div>
-
-        <!-- Playhead -->
-        <div
-          class="absolute top-0 bottom-0 w-[2px] pointer-events-none z-30 shadow-lg"
-          :class="color === 'cyan' ? 'bg-cyan-300 shadow-[0_0_8px_#22d3ee]' : 'bg-rose-300 shadow-[0_0_8px_#fb7185]'"
-          :style="{ left: `${deck.progress * 100}%` }"
-        >
-          <div
-            class="absolute -top-0.5 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45"
-            :class="color === 'cyan' ? 'bg-cyan-300' : 'bg-rose-300'"
-          ></div>
-          <div
-            class="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45"
-            :class="color === 'cyan' ? 'bg-cyan-300' : 'bg-rose-300'"
-          ></div>
-        </div>
-
-        <!-- Elapsed Color Wash -->
-        <div
-          class="absolute left-0 top-0 bottom-0 pointer-events-none z-10"
-          :class="color === 'cyan' ? 'bg-gradient-to-r from-cyan-950/20 to-cyan-500/5' : 'bg-gradient-to-r from-rose-950/20 to-rose-500/5'"
-          :style="{ width: `${deck.progress * 100}%` }"
-        ></div>
+    <!-- Legend -->
+    <div class="flex items-center gap-2.5 text-[7.5px] font-sans font-semibold">
+      <div class="flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+        <span class="text-red-400">KICK</span>
+      </div>
+      <div class="flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+        <span class="text-green-400">SNARE</span>
+      </div>
+      <div class="flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+        <span class="text-blue-400">CLAP</span>
       </div>
     </div>
 
+    <div class="font-mono text-[7px] font-bold" :class="color === 'cyan' ? 'text-cyan-400' : 'text-rose-400'">
+      {{ remainingTime }}
+    </div>
+  </div>
+
+  <!-- ✅ Waveform Scrubber Track -->
+  <div
+    @mousedown="handleScrubberMouseDown"
+    title="Click or drag to scrub/seek"
+    class="h-12 bg-[#050609] border rounded-lg relative cursor-ew-resize group overflow-hidden select-none"
+    :class="color === 'cyan' ? 'border-cyan-500/30 hover:border-cyan-400/80' : 'border-rose-500/30 hover:border-rose-400/80'"
+  >
+    <canvas ref="scrubberCanvasRef" class="w-full h-full block"></canvas>
+
+    <!-- ✅ Loading overlay ពេល decode -->
+    <div
+      v-if="deck.status === 'LOADING...'"
+      class="absolute inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-40"
+    >
+      <div class="flex items-center gap-2">
+        <div
+          class="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
+          :class="color === 'cyan' ? 'border-cyan-400' : 'border-rose-400'"
+        ></div>
+        <span class="text-[10px] font-black text-zinc-300">LOADING...</span>
+      </div>
+    </div>
+
+    <!-- ✅ Progressive waveform progress bar (នៅខាងក្រោម) -->
+    <div
+      v-if="isAnalyzing"
+      class="absolute bottom-0 left-0 h-[2px] transition-all duration-300 z-30 pointer-events-none"
+      :class="color === 'cyan' ? 'bg-cyan-400' : 'bg-rose-400'"
+      :style="{
+        width: `${waveformProgress * 100}%`,
+        boxShadow: color === 'cyan' ? '0 0 8px #22d3ee' : '0 0 8px #fb7185',
+      }"
+    ></div>
+
+    <!-- ✅ Analyzing indicator (តូច នៅខាងលើស្តាំ) -->
+    <div
+      v-if="isAnalyzing"
+      class="absolute top-1 right-1 z-30 pointer-events-none flex items-center gap-1 bg-black/60 px-1.5 py-0.5 rounded backdrop-blur-sm"
+    >
+      <div
+        class="w-2 h-2 border border-t-transparent rounded-full animate-spin"
+        :class="color === 'cyan' ? 'border-cyan-400' : 'border-rose-400'"
+      ></div>
+      <span class="text-[7px] font-black text-zinc-400">
+        {{ Math.round(waveformProgress * 100) }}%
+      </span>
+    </div>
+
+    <!-- Hot Cue Markers -->
+    <div
+      v-for="(cuePos, cueIdx) in [0.05, 0.28, 0.52, 0.78]"
+      :key="'cue-flag-' + cueIdx"
+      class="absolute top-0 bottom-0 pointer-events-none z-20 flex flex-col justify-between"
+      :style="{ left: `${cuePos * 100}%` }"
+    >
+      <div
+        class="px-1 py-[0.5px] text-[5.5px] font-black rounded-xs -translate-x-1/2 shadow-sm"
+        :class="color === 'cyan' ? 'bg-cyan-400 text-black' : 'bg-rose-400 text-white'"
+      >
+        {{ cueIdx + 1 }}
+      </div>
+      <div
+        class="w-[1px] h-full opacity-40 -translate-x-1/2"
+        :class="color === 'cyan' ? 'bg-cyan-400' : 'bg-rose-400'"
+      ></div>
+    </div>
+
+    <!-- Playhead -->
+    <div
+      class="absolute top-0 bottom-0 w-[2px] pointer-events-none z-30 shadow-lg"
+      :class="color === 'cyan' ? 'bg-cyan-300 shadow-[0_0_8px_#22d3ee]' : 'bg-rose-300 shadow-[0_0_8px_#fb7185]'"
+      :style="{ left: `${deck.progress * 100}%` }"
+    >
+      <div
+        class="absolute -top-0.5 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45"
+        :class="color === 'cyan' ? 'bg-cyan-300' : 'bg-rose-300'"
+      ></div>
+      <div
+        class="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45"
+        :class="color === 'cyan' ? 'bg-cyan-300' : 'bg-rose-300'"
+      ></div>
+    </div>
+
+    <!-- Elapsed Color Wash -->
+    <div
+      class="absolute left-0 top-0 bottom-0 pointer-events-none z-10"
+      :class="color === 'cyan' ? 'bg-gradient-to-r from-cyan-950/20 to-cyan-500/5' : 'bg-gradient-to-r from-rose-950/20 to-rose-500/5'"
+      :style="{ width: `${deck.progress * 100}%` }"
+    ></div>
+  </div>
+</div>
+
     <!-- ================= 3. MAIN CENTER ================= -->
     <div class="grid grid-cols-12 gap-2.5 items-center flex-1 my-0.5">
-
       <!-- 3.1 LEFT: PADS -->
-      <div class="col-span-4 bg-[#08090d] border border-zinc-800/90 rounded-xl p-2 flex flex-col justify-between h-[155px]">
-        <div class="grid grid-cols-4 gap-0.5 bg-black/60 p-0.5 rounded-lg border border-zinc-800 mb-1">
+      <div
+        class="col-span-4 bg-[#08090d] border border-zinc-800/90 rounded-xl p-2 flex flex-col justify-between h-[155px]"
+      >
+        <div
+          class="grid grid-cols-4 gap-0.5 bg-black/60 p-0.5 rounded-lg border border-zinc-800 mb-1"
+        >
           <button
-            v-for="tab in (['HOT CUE', 'LOOP', 'STEMS', 'FX'] as TabMode[])" :key="tab"
+            v-for="tab in ['HOT CUE', 'LOOP', 'STEMS', 'FX'] as TabMode[]"
+            :key="tab"
             @click="activeTab = tab"
             class="text-[6.5px] font-black py-1 rounded transition-all cursor-pointer truncate text-center"
-            :class="activeTab === tab
-              ? (color === 'cyan' ? 'bg-cyan-500 text-black shadow-xs font-black' : 'bg-rose-500 text-white shadow-xs font-black')
-              : 'text-zinc-500 hover:text-zinc-300'"
+            :class="
+              activeTab === tab
+                ? color === 'cyan'
+                  ? 'bg-cyan-500 text-black shadow-xs font-black'
+                  : 'bg-rose-500 text-white shadow-xs font-black'
+                : 'text-zinc-500 hover:text-zinc-300'
+            "
           >
-            {{ tab.replace('HOT ', '') }}
+            {{ tab.replace("HOT ", "") }}
           </button>
         </div>
 
-        <div v-if="activeTab === 'HOT CUE'" class="grid grid-cols-2 gap-1.5 flex-1">
+        <div
+          v-if="activeTab === 'HOT CUE'"
+          class="grid grid-cols-2 gap-1.5 flex-1"
+        >
           <button
-            v-for="pad in [1, 2, 3, 4]" :key="'cue-' + pad"
+            v-for="pad in [1, 2, 3, 4]"
+            :key="'cue-' + pad"
             class="rounded-lg border text-[9px] font-black active:scale-95 transition-all cursor-pointer flex flex-col items-center justify-center p-1 shadow-xs group"
-            :class="color === 'cyan'
-              ? 'bg-cyan-950/20 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 hover:border-cyan-400'
-              : 'bg-rose-950/20 border-rose-500/30 text-rose-300 hover:bg-rose-500/25 hover:border-rose-400'"
+            :class="
+              color === 'cyan'
+                ? 'bg-cyan-950/20 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 hover:border-cyan-400'
+                : 'bg-rose-950/20 border-rose-500/30 text-rose-300 hover:bg-rose-500/25 hover:border-rose-400'
+            "
           >
             <span>CUE {{ pad }}</span>
-            <span class="text-[6.5px] text-zinc-500 group-hover:text-zinc-300 font-mono">0{{ pad }}:0{{ pad * 8 }}</span>
+            <span
+              class="text-[6.5px] text-zinc-500 group-hover:text-zinc-300 font-mono"
+              >0{{ pad }}:0{{ pad * 8 }}</span
+            >
           </button>
         </div>
 
-        <div v-else-if="activeTab === 'LOOP'" class="grid grid-cols-2 gap-1.5 flex-1">
+        <div
+          v-else-if="activeTab === 'LOOP'"
+          class="grid grid-cols-2 gap-1.5 flex-1"
+        >
           <button
-            v-for="l in ['1/2', '1', '2', '4']" :key="'loop-' + l"
+            v-for="l in ['1/2', '1', '2', '4']"
+            :key="'loop-' + l"
             @click="toggleLoop(l)"
             class="rounded-lg border text-[9px] font-black active:scale-95 transition-all cursor-pointer flex items-center justify-center shadow-xs"
-            :class="activeLoop === l
-              ? 'bg-amber-500 border-amber-300 text-black shadow-[0_0_8px_#f59e0b]'
-              : 'bg-amber-950/20 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'"
+            :class="
+              activeLoop === l
+                ? 'bg-amber-500 border-amber-300 text-black shadow-[0_0_8px_#f59e0b]'
+                : 'bg-amber-950/20 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
+            "
           >
             {{ l }} BEAT
           </button>
         </div>
 
-        <div v-else-if="activeTab === 'STEMS'" class="grid grid-cols-2 gap-1.5 flex-1">
+        <div
+          v-else-if="activeTab === 'STEMS'"
+          class="grid grid-cols-2 gap-1.5 flex-1"
+        >
           <button
             @click="stems.vocal = !stems.vocal"
             class="rounded-lg border text-[8px] font-black cursor-pointer flex items-center justify-center transition-all"
-            :class="stems.vocal ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300 shadow-[0_0_6px_rgba(16,185,129,0.3)]' : 'bg-zinc-900 border-zinc-800 text-zinc-600'"
+            :class="
+              stems.vocal
+                ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300 shadow-[0_0_6px_rgba(16,185,129,0.3)]'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-600'
+            "
           >
             🎤 VOCAL
           </button>
           <button
             @click="stems.drum = !stems.drum"
             class="rounded-lg border text-[8px] font-black cursor-pointer flex items-center justify-center transition-all"
-            :class="stems.drum ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow-[0_0_6px_rgba(245,158,11,0.3)]' : 'bg-zinc-900 border-zinc-800 text-zinc-600'"
+            :class="
+              stems.drum
+                ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow-[0_0_6px_rgba(245,158,11,0.3)]'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-600'
+            "
           >
             🥁 DRUMS
           </button>
           <button
             @click="stems.bass = !stems.bass"
             class="rounded-lg border text-[8px] font-black cursor-pointer flex items-center justify-center transition-all"
-            :class="stems.bass ? 'bg-indigo-500/25 border-indigo-400 text-indigo-300 shadow-[0_0_6px_rgba(99,102,241,0.3)]' : 'bg-zinc-900 border-zinc-800 text-zinc-600'"
+            :class="
+              stems.bass
+                ? 'bg-indigo-500/25 border-indigo-400 text-indigo-300 shadow-[0_0_6px_rgba(99,102,241,0.3)]'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-600'
+            "
           >
             🎸 BASS
           </button>
           <button
             @click="stems.melody = !stems.melody"
             class="rounded-lg border text-[8px] font-black cursor-pointer flex items-center justify-center transition-all"
-            :class="stems.melody ? 'bg-sky-500/25 border-sky-400 text-sky-300 shadow-[0_0_6px_rgba(14,165,233,0.3)]' : 'bg-zinc-900 border-zinc-800 text-zinc-600'"
+            :class="
+              stems.melody
+                ? 'bg-sky-500/25 border-sky-400 text-sky-300 shadow-[0_0_6px_rgba(14,165,233,0.3)]'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-600'
+            "
           >
             🎹 MELODY
           </button>
@@ -634,7 +688,8 @@ const remainingTime = computed(() => {
 
         <div v-else class="grid grid-cols-2 gap-1.5 flex-1">
           <button
-            v-for="fx in ['ECHO', 'REVERB', 'FLANGER', 'ROLL']" :key="fx"
+            v-for="fx in ['ECHO', 'REVERB', 'FLANGER', 'ROLL']"
+            :key="fx"
             class="rounded-lg border border-purple-500/30 bg-purple-950/20 text-purple-300 text-[8px] font-black active:scale-95 transition-all cursor-pointer flex items-center justify-center hover:bg-purple-500/25"
           >
             {{ fx }}
@@ -648,14 +703,18 @@ const remainingTime = computed(() => {
       </div>
 
       <!-- 3.3 RIGHT: PITCH -->
-      <div class="col-span-3 flex flex-col items-center justify-between bg-[#08090d] border border-zinc-800/90 p-1.5 rounded-xl h-[155px]">
+      <div
+        class="col-span-3 flex flex-col items-center justify-between bg-[#08090d] border border-zinc-800/90 p-1.5 rounded-xl h-[155px]"
+      >
         <button
           @click="$emit('sync')"
           title="Instant BPM Sync with Master Deck"
           class="w-full py-1 rounded text-[8px] font-black tracking-wider border transition-all cursor-pointer flex items-center justify-center gap-1 active:scale-95"
-          :class="deck.isSynced
-            ? 'bg-blue-500 border-blue-400 text-white shadow-[0_0_8px_#3b82f6]'
-            : 'bg-zinc-900 hover:bg-blue-950/40 border-zinc-700 text-zinc-300 hover:border-blue-500/50'"
+          :class="
+            deck.isSynced
+              ? 'bg-blue-500 border-blue-400 text-white shadow-[0_0_8px_#3b82f6]'
+              : 'bg-zinc-900 hover:bg-blue-950/40 border-zinc-700 text-zinc-300 hover:border-blue-500/50'
+          "
         >
           <span class="w-1 h-1 rounded-full bg-blue-400"></span>
           SYNC
@@ -675,7 +734,9 @@ const remainingTime = computed(() => {
           />
         </div>
 
-        <div class="w-full flex items-center justify-between pt-1 border-t border-zinc-800/80 px-0.5">
+        <div
+          class="w-full flex items-center justify-between pt-1 border-t border-zinc-800/80 px-0.5"
+        >
           <button
             @click="$emit('nudge', -0.2)"
             class="w-4 h-4 rounded bg-zinc-900 border border-zinc-800 text-[9px] font-black text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer active:scale-90"
@@ -702,38 +763,50 @@ const remainingTime = computed(() => {
           </button>
         </div>
       </div>
-
     </div>
 
     <!-- ================= 4. BOTTOM TRANSPORT ================= -->
-    <div class="grid grid-cols-12 gap-2 pt-1.5 border-t border-zinc-800/80 mt-1 shrink-0">
+    <div
+      class="grid grid-cols-12 gap-2 pt-1.5 border-t border-zinc-800/80 mt-1 shrink-0"
+    >
       <button
         @click="$emit('cue')"
         class="col-span-5 py-2 rounded-xl border flex items-center justify-center gap-1.5 font-black text-xs tracking-wider transition-all cursor-pointer shadow-md active:scale-95"
-        :class="deck.cueActive
-          ? 'bg-amber-400 border-amber-300 text-black shadow-[0_0_12px_#f59e0b]'
-          : 'bg-[#181a22] hover:bg-zinc-800 border-amber-500/40 text-amber-400'"
+        :class="
+          deck.cueActive
+            ? 'bg-amber-400 border-amber-300 text-black shadow-[0_0_12px_#f59e0b]'
+            : 'bg-[#181a22] hover:bg-zinc-800 border-amber-500/40 text-amber-400'
+        "
       >
-        <span class="w-2 h-2 rounded-full border border-amber-400 bg-amber-950"></span>
+        <span
+          class="w-2 h-2 rounded-full border border-amber-400 bg-amber-950"
+        ></span>
         CUE
       </button>
 
       <button
         @click="$emit('play')"
         class="col-span-7 py-2 rounded-xl border flex items-center justify-center gap-2 font-black text-xs tracking-wider transition-all cursor-pointer shadow-md active:scale-95"
-        :class="deck.isPlaying
-          ? (color === 'cyan'
+        :class="
+          deck.isPlaying
+            ? color === 'cyan'
               ? 'bg-cyan-500 border-cyan-300 text-black shadow-[0_0_16px_rgba(6,182,212,0.6)]'
-              : 'bg-rose-500 border-rose-300 text-white shadow-[0_0_16px_rgba(244,63,94,0.6)]')
-          : 'bg-[#181a22] hover:bg-zinc-800 border-zinc-700 text-zinc-200'"
+              : 'bg-rose-500 border-rose-300 text-white shadow-[0_0_16px_rgba(244,63,94,0.6)]'
+            : 'bg-[#181a22] hover:bg-zinc-800 border-zinc-700 text-zinc-200'
+        "
       >
         <span
           class="w-2.5 h-2.5 rounded-full"
-          :class="deck.isPlaying ? 'bg-white shadow-[0_0_6px_#ffffff]' : (color === 'cyan' ? 'bg-cyan-400' : 'bg-rose-400')"
+          :class="
+            deck.isPlaying
+              ? 'bg-white shadow-[0_0_6px_#ffffff]'
+              : color === 'cyan'
+                ? 'bg-cyan-400'
+                : 'bg-rose-400'
+          "
         ></span>
         {{ deck.isPlaying ? "PAUSE" : "PLAY" }}
       </button>
     </div>
-
   </div>
 </template>

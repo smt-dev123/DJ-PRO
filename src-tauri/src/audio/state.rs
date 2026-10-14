@@ -1,3 +1,5 @@
+use crate::audio::decoder::WaveBandPeak;
+
 #[derive(Default)]
 pub struct Deck {
     pub samples: Vec<f32>,
@@ -8,6 +10,8 @@ pub struct Deck {
     pub sample_rate: u32,
     pub channels: u16,
     pub duration_secs: f32,
+    pub waveform_peaks: Vec<WaveBandPeak>,
+    pub waveform_ready: bool,
 }
 
 impl Deck {
@@ -40,7 +44,8 @@ impl Deck {
 pub struct MixerState {
     pub deck_a: Deck,
     pub deck_b: Deck,
-    pub crossfader: f32, // 0.0 (A) -> 1.0 (B)
+    pub crossfader: f32,
+    pub master_volume: f32,
 }
 
 impl Default for MixerState {
@@ -49,6 +54,7 @@ impl Default for MixerState {
             deck_a: Deck { volume: 0.85, sample_rate: 44100, channels: 2, ..Default::default() },
             deck_b: Deck { volume: 0.85, sample_rate: 44100, channels: 2, ..Default::default() },
             crossfader: 0.5,
+            master_volume: 0.85,
         }
     }
 }

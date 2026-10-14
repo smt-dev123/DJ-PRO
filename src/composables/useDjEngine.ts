@@ -1,71 +1,33 @@
 import { reactive, ref, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { DeckId, DeckState, LibraryTrack, WaveformPeak } from "../types/dj";
 
-interface TrackLoadedResponse {
+interface TrackLoadedFast {
   title: string;
   duration: string;
   duration_secs: number;
   sample_rate: number;
-  waveform: WaveformPeak[];
+  deck_id: string;
 }
 
-function generateMockWaveform(seed: number): WaveformPeak[] {
-  const points: WaveformPeak[] = [];
-  const total = 1400;
+interface WaveformChunkPayload {
+  deckId: "A" | "B";
+  chunk: WaveformPeak[];
+  chunkIndex: number;
+  totalChunks: number;
+}
 
-  for (let i = 0; i < total; i++) {
-    // Realistic DJ Track Phrasing:
-    // 0 - 240: Intro (ភ្លេងបុក / Pure Beat for transition in)
-    // 240 - 520: Verse (សំឡេងច្រៀងចូល / Vocals Enter)
-    // 520 - 640: Build-up (Melody / Snare Roll)
-    // 640 - 960: DROP! (ភ្លេងបុក / Heavy Beat & Sub-Bass Drop)
-    // 960 - 1200: Chorus (Vocal Hook + Beat)
-    // 1200 - 1400: Outro (ភ្លេងបុក / Beat for transition out)
+interface WaveformCompletePayload {
+  deckId: "A" | "B";
+}
 
-    const isKick = i % 8 === 0 || i % 8 === 4;
-    const isSnare = i % 8 === 4;
-    const isHihat = i % 2 === 0;
-
-    let hasVocal = false;
-    let isHeavyDrop = false;
-
-    if ((i >= 240 && i < 520) || (i >= 960 && i < 1200)) {
-      hasVocal = true;
-    } else if (i >= 640 && i < 960) {
-      isHeavyDrop = true;
-    }
-
-    let bass: number;
-    let mid: number;
-    let vocalHigh: number;
-
-    if (hasVocal) {
-      // 🎤 Singing Section (សំឡេងច្រៀងចូល):
-      const vocalMelody = 0.65 + Math.sin((i + seed) * 0.15) * 0.25;
-      mid = Math.min(0.98, vocalMelody + (isSnare ? 0.1 : 0));
-      vocalHigh = Math.min(0.85, 0.45 + Math.sin(i * 0.2) * 0.3 + (isHihat ? 0.15 : 0));
-      bass = isKick ? 0.65 : 0.22;
-    } else if (isHeavyDrop) {
-      // 🥁 Heavy Beat Drop (ភ្លេងបុក):
-      bass = isKick ? Math.min(1.0, 0.88 + Math.random() * 0.12) : 0.48;
-      mid = isSnare ? 0.35 : 0.12;
-      vocalHigh = isHihat ? 0.35 : 0.1;
-    } else {
-      // 🎶 Intro / Outro / Build-up (ភ្លេងបុក - Beat for mixing):
-      bass = isKick ? 0.82 : 0.26;
-      mid = isSnare ? 0.28 : 0.14;
-      vocalHigh = isHihat ? 0.3 : 0.1;
-    }
-
-    points.push({
-      low: Number(bass.toFixed(3)),
-      mid: Number(mid.toFixed(3)),
-      high: Number(vocalHigh.toFixed(3)),
-    });
-  }
-  return points;
+interface TrackReadyPayload {
+  deckId: "A" | "B";
+  title: string;
+  duration: string;
+  durationSecs: number;
 }
 
 export function useDjEngine() {
@@ -77,11 +39,11 @@ export function useDjEngine() {
     baseBpm: 126.0,
     bpm: 126.0,
     currentTime: "00:00",
-    totalTime: "04:12",
-    title: "MIDNIGHT CITY",
-    artist: "M83",
+    totalTime: "00:00",
+    title: "No Track Loaded",
+    artist: "—",
     key: "8A",
-    status: "READY",
+    status: "EMPTY",
     eqHigh: 0,
     eqMid: 0,
     eqLow: 0,
@@ -90,9 +52,9 @@ export function useDjEngine() {
     keyLock: true,
     isSynced: false,
     cueActive: false,
-    progress: 0.25,
-    waveform: generateMockWaveform(2),
-    durationSecs: 252,
+    progress: 0,
+    waveform: [],
+    durationSecs: 0,
   });
 
   const deckB = reactive<DeckState>({
@@ -103,11 +65,11 @@ export function useDjEngine() {
     baseBpm: 128.0,
     bpm: 128.0,
     currentTime: "00:00",
-    totalTime: "05:04",
-    title: "TITANIUM VIP",
-    artist: "David Guetta",
+    totalTime: "00:00",
+    title: "No Track Loaded",
+    artist: "—",
     key: "4B",
-    status: "READY",
+    status: "EMPTY",
     eqHigh: 0,
     eqMid: 0,
     eqLow: 0,
@@ -116,37 +78,114 @@ export function useDjEngine() {
     keyLock: true,
     isSynced: false,
     cueActive: false,
-    progress: 0.15,
-    waveform: generateMockWaveform(18),
-    durationSecs: 304,
+    progress: 0,
+    waveform: [],
+    durationSecs: 0,
   });
 
   const crossfader = ref(0.5);
   const masterVolume = ref(0.85);
-
-  // Prevent duplicate concurrent decoding freeze
   const isDecoding = ref<{ A: boolean; B: boolean }>({ A: false, B: false });
 
-  // Load via File Dialog
+  // ==================== EVENT LISTENERS ====================
+  let unlistenChunk: (() => void) | null = null;
+  let unlistenComplete: (() => void) | null = null;
+  let unlistenReady: (() => void) | null = null;
+  let tickerId: any = null;
+
+  async function setupListeners() {
+    // ✅ Waveform chunk → Append ភ្លាម
+    unlistenChunk = await listen<WaveformChunkPayload>("waveform-chunk", (event) => {
+      const { deckId, chunk, chunkIndex, totalChunks } = event.payload;
+      const deck = deckId === "A" ? deckA : deckB;
+
+      // ✅ Append chunk ទៅ waveform ដែលមាន
+      deck.waveform = [...deck.waveform, ...chunk];
+
+      console.log(
+        `[Waveform] Deck ${deckId}: chunk ${chunkIndex + 1}/${totalChunks} (${deck.waveform.length} peaks)`
+      );
+    });
+
+    // ✅ Waveform complete
+    unlistenComplete = await listen<WaveformCompletePayload>(
+      "waveform-complete",
+      (event) => {
+        const { deckId } = event.payload;
+        const deck = deckId === "A" ? deckA : deckB;
+        console.log(`[Waveform] Deck ${deckId}: ✅ COMPLETE (${deck.waveform.length} peaks)`);
+      }
+    );
+
+    // ✅ Track ready
+    unlistenReady = await listen<TrackReadyPayload>("track-ready", (event) => {
+      const { deckId, title, duration, durationSecs } = event.payload;
+      const deck = deckId === "A" ? deckA : deckB;
+
+      deck.title = title;
+      deck.totalTime = duration;
+      deck.durationSecs = durationSecs;
+      deck.status = "READY";
+      deck.waveform = []; // ✅ Reset
+
+      console.log(`[Track] Deck ${deckId}: ✅ READY — PLAY NOW`);
+    });
+  }
+
+  // ==================== PLAYBACK TICKER ====================
+  function updatePlaybackPositions() {
+    if (deckA.isPlaying) {
+      invoke<any>("get_deck_playback", { deckId: "A" })
+        .then((res) => {
+          if (res) {
+            deckA.progress = res.progress;
+            deckA.currentTime = res.current_time_str;
+          }
+        })
+        .catch(() => {});
+    }
+    if (deckB.isPlaying) {
+      invoke<any>("get_deck_playback", { deckId: "B" })
+        .then((res) => {
+          if (res) {
+            deckB.progress = res.progress;
+            deckB.currentTime = res.current_time_str;
+          }
+        })
+        .catch(() => {});
+    }
+  }
+
+  onMounted(() => {
+    setupListeners();
+    tickerId = setInterval(updatePlaybackPositions, 200);
+  });
+
+  onUnmounted(() => {
+    if (unlistenChunk) unlistenChunk();
+    if (unlistenComplete) unlistenComplete();
+    if (unlistenReady) unlistenReady();
+    if (tickerId) clearInterval(tickerId);
+  });
+
+  // ==================== LOAD TRACKS ====================
   async function openTrack(deckId: DeckId) {
     if (isDecoding.value[deckId]) return;
     const selected = await open({
       multiple: false,
       filters: [{ name: "Audio Files", extensions: ["mp3", "wav", "aac", "m4a", "flac", "ogg"] }],
     });
-
     if (selected && typeof selected === "string") {
       await loadFileToDeck(deckId, selected);
     }
   }
 
-  // Load from Music Library row
   async function loadDirectTrack(deckId: DeckId, track: LibraryTrack) {
     if (isDecoding.value[deckId]) return;
     isDecoding.value[deckId] = true;
 
     const deck = deckId === "A" ? deckA : deckB;
-    deck.status = "DECODING...";
+    deck.status = "LOADING...";
     deck.title = track.title;
     deck.artist = track.artist || "Original Artist";
     deck.baseBpm = track.bpm;
@@ -155,79 +194,63 @@ export function useDjEngine() {
     deck.currentTime = "00:00";
     deck.totalTime = track.duration;
     deck.progress = 0.0;
+    deck.isPlaying = false;
+    deck.waveform = [];
 
     try {
-      const res = await invoke<TrackLoadedResponse>("load_track", { deckId, path: track.path });
-      if (res) {
-        deck.title = res.title || track.title;
-        deck.totalTime = res.duration;
-        deck.durationSecs = res.duration_secs;
-        if (res.waveform && res.waveform.length > 0) {
-          deck.waveform = res.waveform;
-        }
-      }
-      deck.status = "READY";
-    } catch {
-      // Simulation fallback for virtual demo tracks
-      deck.durationSecs = 240;
-      deck.waveform = generateMockWaveform(Math.random() * 50);
-      deck.status = "READY";
+      await invoke<TrackLoadedFast>("load_track_fast", {
+        deckId,
+        path: track.path,
+      });
+      // Event "track-ready" នឹង update deck state
+    } catch (err) {
+      console.error(`[Deck ${deckId}] Load error:`, err);
+      deck.status = "ERROR";
     } finally {
       isDecoding.value[deckId] = false;
     }
   }
 
-  // Load directly from File Path (Drag and drop or OS Explorer)
   async function loadFileToDeck(deckId: DeckId, filePath: string) {
     if (isDecoding.value[deckId]) return;
     isDecoding.value[deckId] = true;
 
     const deck = deckId === "A" ? deckA : deckB;
-    deck.status = "DECODING...";
+    deck.status = "LOADING...";
     const fileName = filePath.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, "") || "Track";
     deck.title = fileName;
     deck.artist = "Local File";
     deck.isPlaying = false;
     deck.currentTime = "00:00";
     deck.progress = 0.0;
+    deck.waveform = [];
 
     try {
-      const res = await invoke<TrackLoadedResponse>("load_track", { deckId, path: filePath });
-      if (res) {
-        deck.title = res.title || fileName;
-        deck.totalTime = res.duration;
-        deck.durationSecs = res.duration_secs;
-        if (res.waveform && res.waveform.length > 0) {
-          deck.waveform = res.waveform;
-        }
-      }
-      deck.status = "READY";
-    } catch {
-      deck.durationSecs = 240;
-      deck.totalTime = "04:00";
-      deck.waveform = generateMockWaveform(Math.random() * 50);
-      deck.status = "READY";
+      await invoke<TrackLoadedFast>("load_track_fast", {
+        deckId,
+        path: filePath,
+      });
+      // Event "track-ready" នឹង update deck state
+    } catch (err) {
+      console.error(`[Deck ${deckId}] Load error:`, err);
+      deck.status = "ERROR";
     } finally {
       isDecoding.value[deckId] = false;
     }
   }
 
-  // Seek / Scrub (ខារចម្រៀង)
+  // ==================== CONTROLS ====================
   async function seekDeck(deckId: DeckId, ratio: number) {
     const deck = deckId === "A" ? deckA : deckB;
     const clampedRatio = Math.max(0, Math.min(1, ratio));
     deck.progress = clampedRatio;
-
     const curSecs = Math.round(clampedRatio * deck.durationSecs);
     const mins = Math.floor(curSecs / 60);
     const secs = curSecs % 60;
     deck.currentTime = `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-
     try {
       await invoke("seek_deck", { deckId, ratio: clampedRatio });
-    } catch {
-      // fallback
-    }
+    } catch {}
   }
 
   async function togglePlay(deckId: DeckId) {
@@ -235,10 +258,10 @@ export function useDjEngine() {
     try {
       const playing = await invoke<boolean>("toggle_play", { deckId });
       deck.isPlaying = playing;
-      deck.status = playing ? "PLAYING" : "PAUSED";
+      deck.status = playing ? "PLAYING" : "READY";
     } catch {
       deck.isPlaying = !deck.isPlaying;
-      deck.status = deck.isPlaying ? "PLAYING" : "PAUSED";
+      deck.status = deck.isPlaying ? "PLAYING" : "READY";
     }
   }
 
@@ -255,7 +278,6 @@ export function useDjEngine() {
   async function syncDeck(deckId: DeckId) {
     const target = deckId === "A" ? deckA : deckB;
     const source = deckId === "A" ? deckB : deckA;
-
     target.bpm = source.bpm;
     target.pitch = Number((((source.bpm / target.baseBpm) - 1) * 100).toFixed(1));
     target.isSynced = true;
@@ -298,61 +320,6 @@ export function useDjEngine() {
       await invoke("set_crossfader", { val: crossfader.value });
     } catch {}
   }
-
-  // Real-time playback position ticker (updates progress & time smoothly)
-  let tickerId: any = null;
-
-  function updatePlaybackPositions() {
-    if (deckA.isPlaying) {
-      invoke<any>("get_deck_playback", { deckId: "A" })
-        .then((res) => {
-          if (res) {
-            deckA.progress = res.progress;
-            deckA.currentTime = res.current_time_str;
-          }
-        })
-        .catch(() => {
-          // simulation fallback
-          if (deckA.durationSecs > 0) {
-            deckA.progress = Math.min(1, deckA.progress + 0.1 / deckA.durationSecs);
-            const curSecs = Math.round(deckA.progress * deckA.durationSecs);
-            const m = Math.floor(curSecs / 60);
-            const s = curSecs % 60;
-            deckA.currentTime = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-          }
-        });
-    }
-
-    if (deckB.isPlaying) {
-      invoke<any>("get_deck_playback", { deckId: "B" })
-        .then((res) => {
-          if (res) {
-            deckB.progress = res.progress;
-            deckB.currentTime = res.current_time_str;
-          }
-        })
-        .catch(() => {
-          // simulation fallback
-          if (deckB.durationSecs > 0) {
-            deckB.progress = Math.min(1, deckB.progress + 0.1 / deckB.durationSecs);
-            const curSecs = Math.round(deckB.progress * deckB.durationSecs);
-            const m = Math.floor(curSecs / 60);
-            const s = curSecs % 60;
-            deckB.currentTime = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-          }
-        });
-    }
-  }
-
-  onMounted(() => {
-    tickerId = setInterval(updatePlaybackPositions, 100);
-  });
-
-  onUnmounted(() => {
-    if (tickerId) {
-      clearInterval(tickerId);
-    }
-  });
 
   return {
     deckA,

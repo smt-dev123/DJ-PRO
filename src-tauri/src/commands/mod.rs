@@ -2,9 +2,11 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use serde::Serialize;
-use tauri::State;
+use tauri::{State, AppHandle, Emitter};
 use crate::audio::state::MixerState;
-use crate::audio::decoder::decode_file;
+use crate::audio::decoder::{
+    decode_samples_only, extract_waveform_progressive, WaveBandPeak,
+};
 
 #[derive(Serialize)]
 pub struct FileTrackItem {
@@ -21,16 +23,16 @@ pub struct FileTrackItem {
 pub struct DriveItem {
     pub name: String,
     pub path: String,
-    pub kind: String, // "drive" or "system"
+    pub kind: String,
 }
 
-#[derive(Serialize)]
-pub struct TrackLoadedInfo {
+#[derive(Serialize, Clone)]
+pub struct TrackLoadedFast {
     pub title: String,
     pub duration: String,
     pub duration_secs: f32,
     pub sample_rate: u32,
-    pub waveform: Vec<crate::audio::decoder::WaveBandPeak>,
+    pub deck_id: String,
 }
 
 #[derive(Serialize)]
@@ -41,45 +43,164 @@ pub struct DeckPlaybackStatus {
     pub remaining_time_str: String,
 }
 
-// Background async track decode - NEVER blocks UI thread!
+// ==================== LOAD + PROGRESSIVE WAVEFORM ====================
 #[tauri::command]
-pub async fn load_track(
+pub async fn load_track_fast(
     deck_id: String,
     path: String,
+    app: AppHandle,
     state: State<'_, Arc<Mutex<MixerState>>>,
-) -> Result<TrackLoadedInfo, String> {
-    let decoded = tokio::task::spawn_blocking(move || decode_file(&path))
+) -> Result<TrackLoadedFast, String> {
+    // ==================== PHASE 1: DECODE SAMPLES ====================
+    let path_clone = path.clone();
+    let decoded = tokio::task::spawn_blocking(move || decode_samples_only(&path_clone))
         .await
         .map_err(|e| e.to_string())??;
 
-    let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" {
-        &mut lock.deck_a
-    } else {
-        &mut lock.deck_b
-    };
+    let duration_secs = decoded.duration_secs;
+    let title = decoded.title.clone();
+    let sample_rate = decoded.sample_rate;
+    let channels = decoded.channels;
 
-    deck.samples = decoded.samples;
-    deck.position = 0;
-    deck.is_playing = false;
-    deck.title = decoded.title.clone();
-    deck.sample_rate = decoded.sample_rate;
-    deck.channels = decoded.channels;
-    deck.duration_secs = decoded.duration_secs;
+    // ✅ Update deck state ភ្លាម
+    {
+        let mut lock = state.lock().map_err(|e| e.to_string())?;
+        let deck = if deck_id == "A" {
+            &mut lock.deck_a
+        } else {
+            &mut lock.deck_b
+        };
 
-    let mins = (decoded.duration_secs as u32) / 60;
-    let secs = (decoded.duration_secs as u32) % 60;
-    let duration = format!("{:02}:{:02}", mins, secs);
+        deck.samples = decoded.samples;
+        deck.position = 0;
+        deck.is_playing = false;
+        deck.title = title.clone();
+        deck.sample_rate = sample_rate;
+        deck.channels = channels;
+        deck.duration_secs = duration_secs;
+        deck.waveform_peaks = Vec::new();
+        deck.waveform_ready = false;
+    }
 
-    Ok(TrackLoadedInfo {
-        title: decoded.title,
-        duration,
-        duration_secs: decoded.duration_secs,
-        sample_rate: decoded.sample_rate,
-        waveform: decoded.waveform_peaks,
+    let mins = (duration_secs as u32) / 60;
+    let secs = (duration_secs as u32) % 60;
+    let duration_str = format!("{:02}:{:02}", mins, secs);
+
+    // ✅ Emit track-ready event
+    let _ = app.emit(
+        "track-ready",
+        serde_json::json!({
+            "deckId": deck_id,
+            "title": title,
+            "duration": duration_str,
+            "durationSecs": duration_secs,
+        }),
+    );
+
+    // ==================== PHASE 2: PROGRESSIVE WAVEFORM ====================
+    let app_clone = app.clone();
+    let state_clone = Arc::clone(&state);
+    let deck_id_for_analysis = deck_id.clone();
+    let deck_id_for_return = deck_id.clone();
+    let title_for_return = title.clone();
+    let duration_str_for_return = duration_str.clone();
+
+    tokio::task::spawn_blocking(move || {
+        // យក samples មក analyze
+        let (samples, sample_rate, channels, duration_secs) = {
+            let lock = match state_clone.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let deck = if deck_id_for_analysis == "A" {
+                &lock.deck_a
+            } else {
+                &lock.deck_b
+            };
+            (
+                deck.samples.clone(),
+                deck.sample_rate,
+                deck.channels,
+                deck.duration_secs,
+            )
+        };
+
+        let total_chunks = 10;
+        let deck_id_inner = deck_id_for_analysis.clone();
+        let app_inner = app_clone.clone();
+
+        // ✅ Extract waveform ជា chunk និង emit រាល់ chunk
+        let peaks = extract_waveform_progressive(
+            &samples,
+            sample_rate,
+            channels,
+            duration_secs,
+            total_chunks,
+            |chunk_peaks, chunk_idx, _total| {
+                let _ = app_inner.emit(
+                    "waveform-chunk",
+                    serde_json::json!({
+                        "deckId": deck_id_inner,
+                        "chunk": chunk_peaks,
+                        "chunkIndex": chunk_idx,
+                        "totalChunks": total_chunks,
+                    }),
+                );
+            },
+        );
+
+        // ✅ Update final state
+        {
+            let mut lock = match state_clone.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let deck = if deck_id_for_analysis == "A" {
+                &mut lock.deck_a
+            } else {
+                &mut lock.deck_b
+            };
+            deck.waveform_peaks = peaks;
+            deck.waveform_ready = true;
+        }
+
+        // ✅ Emit complete event
+        let _ = app_clone.emit(
+            "waveform-complete",
+            serde_json::json!({
+                "deckId": deck_id_for_analysis,
+            }),
+        );
+
+        println!("[Analysis] ✅ Deck {} waveform complete", deck_id_for_analysis);
+    });
+
+    // ✅ Return ភ្លាម
+    Ok(TrackLoadedFast {
+        title: title_for_return,
+        duration: duration_str_for_return,
+        duration_secs,
+        sample_rate,
+        deck_id: deck_id_for_return,
     })
 }
 
+// ==================== GET WAVEFORM (Fallback) ====================
+#[tauri::command]
+pub fn get_waveform(
+    deck_id: String,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<Option<Vec<WaveBandPeak>>, String> {
+    let lock = state.lock().map_err(|e| e.to_string())?;
+    let deck = if deck_id == "A" { &lock.deck_a } else { &lock.deck_b };
+    if deck.waveform_ready && !deck.waveform_peaks.is_empty() {
+        Ok(Some(deck.waveform_peaks.clone()))
+    } else {
+        Ok(None)
+    }
+}
+
+// ==================== PLAYBACK CONTROLS ====================
 #[tauri::command]
 pub fn seek_deck(
     deck_id: String,
@@ -87,11 +208,7 @@ pub fn seek_deck(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<f32, String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" {
-        &mut lock.deck_a
-    } else {
-        &mut lock.deck_b
-    };
+    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
     deck.seek_ratio(ratio);
     Ok(deck.get_progress_ratio())
 }
@@ -127,11 +244,7 @@ pub fn toggle_play(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<bool, String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" {
-        &mut lock.deck_a
-    } else {
-        &mut lock.deck_b
-    };
+    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
     deck.is_playing = !deck.is_playing;
     Ok(deck.is_playing)
 }
@@ -143,11 +256,7 @@ pub fn set_deck_volume(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<(), String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" {
-        &mut lock.deck_a
-    } else {
-        &mut lock.deck_b
-    };
+    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
     deck.volume = vol;
     Ok(())
 }
@@ -162,10 +271,10 @@ pub fn set_crossfader(
     Ok(())
 }
 
+// ==================== FILE SYSTEM ====================
 #[tauri::command]
 pub fn get_system_drives() -> Vec<DriveItem> {
     let mut list = Vec::new();
-
     if let Some(user_dir) = std::env::var_os("USERPROFILE") {
         let user_path = std::path::PathBuf::from(user_dir);
         list.push(DriveItem {
@@ -184,7 +293,6 @@ pub fn get_system_drives() -> Vec<DriveItem> {
             kind: "system".into(),
         });
     }
-
     for drive_letter in b'C'..=b'Z' {
         let drive_str = format!("{}:\\", drive_letter as char);
         if Path::new(&drive_str).exists() {
@@ -195,7 +303,6 @@ pub fn get_system_drives() -> Vec<DriveItem> {
             });
         }
     }
-
     list
 }
 
@@ -205,10 +312,8 @@ pub fn scan_folder_tracks(folder_path: String) -> Result<Vec<FileTrackItem>, Str
     if !path.exists() || !path.is_dir() {
         return Ok(Vec::new());
     }
-
     let mut tracks = Vec::new();
     let audio_exts = ["mp3", "wav", "flac", "aac", "m4a", "ogg"];
-
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let file_path = entry.path();
@@ -220,7 +325,6 @@ pub fn scan_folder_tracks(folder_path: String) -> Result<Vec<FileTrackItem>, Str
                             .and_then(|s| s.to_str())
                             .unwrap_or("Unknown Track")
                             .to_string();
-
                         tracks.push(FileTrackItem {
                             id: file_path.to_string_lossy().to_string(),
                             title: file_stem,
@@ -235,6 +339,5 @@ pub fn scan_folder_tracks(folder_path: String) -> Result<Vec<FileTrackItem>, Str
             }
         }
     }
-
     Ok(tracks)
 }

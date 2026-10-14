@@ -20,7 +20,7 @@ export interface DeckState {
   title: string;
   artist: string;
   key: string;
-  status: "EMPTY" | "DECODING..." | "READY" | "PLAYING" | "PAUSED";
+  status: "EMPTY" | "LOADING..." | "READY" | "PLAYING" | "PAUSED" | "STOPPED" | "ERROR";
   eqHigh: number;     // -100 to 100 (0 = Center)
   eqMid: number;
   eqLow: number;

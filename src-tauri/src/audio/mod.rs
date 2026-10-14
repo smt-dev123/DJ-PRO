@@ -8,7 +8,11 @@ use std::sync::{Arc, Mutex};
 
 pub struct AudioEngine {
     pub state: Arc<Mutex<MixerState>>,
-    _stream: Stream,
+}
+
+// ✅ Stream រក្សាទុកក្នុង thread-local ដើម្បីកុំឱ្យ drop
+thread_local! {
+    static AUDIO_STREAM: std::cell::RefCell<Option<Stream>> = std::cell::RefCell::new(None);
 }
 
 impl AudioEngine {
@@ -16,7 +20,9 @@ impl AudioEngine {
         let mixer_state = Arc::new(Mutex::new(MixerState::default()));
 
         let host = cpal::default_host();
-        let device = host.default_output_device().ok_or("No audio output device found")?;
+        let device = host
+            .default_output_device()
+            .ok_or("No audio output device found")?;
         let supported_config = device.default_output_config()?;
         let stream_config: StreamConfig = supported_config.clone().into();
 
@@ -24,9 +30,12 @@ impl AudioEngine {
 
         let stream = match supported_config.sample_format() {
             cpal::SampleFormat::F32 => device.build_output_stream(
-                stream_config,
+                &stream_config,
                 move |data: &mut [f32], _: &OutputCallbackInfo| {
-                    let mut lock = state_clone.lock().unwrap();
+                    let mut lock = match state_clone.lock() {
+                        Ok(g) => g,
+                        Err(_) => return,
+                    };
                     let cf = lock.crossfader;
                     let gain_a = (1.0 - cf).clamp(0.0, 1.0);
                     let gain_b = cf.clamp(0.0, 1.0);
@@ -35,13 +44,21 @@ impl AudioEngine {
                         let mut out_a = 0.0;
                         let mut out_b = 0.0;
 
-                        if lock.deck_a.is_playing && lock.deck_a.position < lock.deck_a.samples.len() {
-                            out_a = lock.deck_a.samples[lock.deck_a.position] * lock.deck_a.volume * gain_a;
+                        if lock.deck_a.is_playing
+                            && lock.deck_a.position < lock.deck_a.samples.len()
+                        {
+                            out_a = lock.deck_a.samples[lock.deck_a.position]
+                                * lock.deck_a.volume
+                                * gain_a;
                             lock.deck_a.position += 1;
                         }
 
-                        if lock.deck_b.is_playing && lock.deck_b.position < lock.deck_b.samples.len() {
-                            out_b = lock.deck_b.samples[lock.deck_b.position] * lock.deck_b.volume * gain_b;
+                        if lock.deck_b.is_playing
+                            && lock.deck_b.position < lock.deck_b.samples.len()
+                        {
+                            out_b = lock.deck_b.samples[lock.deck_b.position]
+                                * lock.deck_b.volume
+                                * gain_b;
                             lock.deck_b.position += 1;
                         }
 
@@ -56,9 +73,10 @@ impl AudioEngine {
 
         stream.play()?;
 
-        Ok(Self {
-            state: mixer_state,
-            _stream: stream,
-        })
+        AUDIO_STREAM.with(|s| {
+            *s.borrow_mut() = Some(stream);
+        });
+
+        Ok(Self { state: mixer_state })
     }
 }

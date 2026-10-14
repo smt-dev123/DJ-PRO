@@ -3,14 +3,9 @@ name = "DJ-PRO"
 version = "0.1.0"
 description = "DJ-PRO"
 authors = ["SMT-DEV"]
-edition = "2024"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2021"
 
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "dj_pro_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -22,12 +17,45 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-cpal = "0.18.2"
+cpal = "0.15"
 symphonia = { version = "0.5.4", features = ["all"] }
 tauri-plugin-dialog = "2.8.2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+# ==================== DEV PROFILE (សំខាន់!) ====================
+# ✅ Optimize dependencies ទោះក្នុង dev mode
+#    ធ្វើឱ្យ Symphonia decode លឿន 10-20x
+[profile.dev]
+opt-level = 2
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 3
+codegen-units = 1
+
+# បង្កើន optimization សម្រាប់ Symphonia ដោយឡែក
+[profile.dev.package.symphonia]
+opt-level = 3
+
+[profile.dev.package.symphonia-core]
+opt-level = 3
+
+[profile.dev.package.symphonia-bundle-mp3]
+opt-level = 3
+
+[profile.dev.package.symphonia-bundle-flac]
+opt-level = 3
+
+[profile.dev.package.symphonia-codec-aac]
+opt-level = 3
+
+[profile.dev.package.symphonia-format-isomp4]
+opt-level = 3
+
+[profile.dev.package.symphonia-format-ogg]
+opt-level = 3
+
+# ==================== RELEASE PROFILE ====================
 [profile.release]
 codegen-units = 1
 lto = true

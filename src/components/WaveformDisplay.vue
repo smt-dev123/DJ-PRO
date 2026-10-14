@@ -14,17 +14,17 @@ const emit = defineEmits<{
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 
-// Zoom level in seconds visible across canvas (Djay Pro default: 8s)
+// ✅ Zoom levels
+const ZOOM_LEVELS = [4, 8, 16, 32, 64];
 const visibleSecs = ref<number>(8.0);
 
 // 60FPS smooth playhead
 let lastAnimTime = performance.now();
 let animFrameId: number | null = null;
-
 let smoothTimeA = 0;
 let smoothTimeB = 0;
 
-// ==================== ENVELOPE CACHE (កុំ allocate រាល់ frame) ====================
+// ==================== ENVELOPE CACHE ====================
 interface EnvelopeCache {
   length: number;
   upper: Float32Array;
@@ -37,6 +37,7 @@ const envCache: EnvelopeCache = {
   lower: new Float32Array(0),
 };
 
+// ==================== GLOBAL PEAK CACHE ====================
 interface GlobalPeakCache {
   deckId: string;
   peakAmp: number;
@@ -120,33 +121,6 @@ function handleCanvasMouseDown(e: MouseEvent) {
   window.addEventListener("mouseup", onMouseUp);
 }
 
-function handleOverviewSeek(deckId: "A" | "B", e: MouseEvent) {
-  e.preventDefault();
-  const target = e.currentTarget as HTMLElement;
-  const rect = target.getBoundingClientRect();
-
-  function updateSeek(ev: MouseEvent) {
-    const x = ev.clientX - rect.left;
-    const ratio = Math.max(0, Math.min(1, x / rect.width));
-    if (deckId === "A") emit("seekA", ratio);
-    else emit("seekB", ratio);
-  }
-
-  updateSeek(e);
-
-  function onMouseMove(ev: MouseEvent) {
-    updateSeek(ev);
-  }
-
-  function onMouseUp() {
-    window.removeEventListener("mousemove", onMouseMove);
-    window.removeEventListener("mouseup", onMouseUp);
-  }
-
-  window.addEventListener("mousemove", onMouseMove);
-  window.addEventListener("mouseup", onMouseUp);
-}
-
 // ==================== WAVEFORM SAMPLING ====================
 function sampleWaveform(
   peaks: WaveformPeak[] | undefined,
@@ -176,69 +150,85 @@ function sampleWaveform(
   };
 }
 
-// ==================== DRUM DETECTION (KICK ISOLATED) ====================
-// ✅ Kick = low ខ្លាំង + mid ទាប (vocal/melody មិនរាប់)
-// ✅ Vocal/Melody = mid ខ្ពស់ → កាត់ចេញ
+// ==================== DRUM DETECTION (KICK ខ្ពស់ខ្លាំង) ====================
+// ✅ Kick boost 1.4x, Snare 0.35x, Clap 0.15x
 function getDrumAmplitude(band: WaveformPeak): number {
   const low = band.low || 0;
   const mid = band.mid || 0;
   const high = band.high || 0;
 
-  // ✅ Kick strength — ត្រូវការ low ខ្លាំង
-  const kickStrength = low;
+  // ✅ Kick ខ្ពស់ខ្លាំង 1.4x
+  const kickStrength = low * 1.4;
+  // Snare support
+  const snareStrength = mid * 0.35;
+  // Clap support
+  const clapStrength = high * 0.15;
 
-  // ✅ Vocal/Melody rejection — បើ mid ខ្ពស់ = vocal ច្រៀង
-  //    vocalRatio ខ្ពស់ → កាត់ amplitude
-  const vocalRatio = mid / (low + 0.03);
-
-  // ✅ Kick ត្រូវមាន low >> mid (kick មាន low ខ្លាំង ប៉ុន្តែ mid តូច)
-  //    vocal/melody មាន mid ខ្ពស់ស្មើ low
-  let finalAmp = kickStrength;
-
-  // បើ vocalRatio > 0.7 = vocal កំពុងច្រៀង → កាត់ចេញ 60%
-  if (vocalRatio > 0.7) {
-    finalAmp *= 0.4;
-  }
-  // បើ vocalRatio > 1.0 = vocal ខ្លាំងជាង kick → កាត់ចេញ 80%
-  else if (vocalRatio > 1.0) {
-    finalAmp *= 0.2;
-  }
-  // បើ vocalRatio < 0.4 = kick បុកច្បាស់ → រក្សាទុក 100%
-  else if (vocalRatio < 0.4) {
-    finalAmp = kickStrength * 1.0;
-  }
-  // កណ្តាល = កាត់ចេញ 30%
-  else {
-    finalAmp *= 0.7;
-  }
-
-  return Math.max(0, finalAmp);
+  return Math.max(kickStrength, snareStrength, clapStrength);
 }
 
+// ==================== RGB COLOR (ឆ្លុះស្អាត) ====================
+// ✅ ពណ៌ RGB តាម frequency content
+function getSliceColor(band: WaveformPeak, deckColor: "cyan" | "rose"): string {
+  const low = band.low || 0;
+  const mid = band.mid || 0;
+  const high = band.high || 0;
 
+  // ✅ Amplitude សម្រាប់ brightness
+  const amplitude = Math.max(low, mid, high);
+
+  // ✅ Base color តាម frequency content
+  let r: number, g: number, b: number;
+
+  if (low > 0.5 && low > mid && low > high) {
+    // ✅ Kick → ក្រហម-ទឹកក្រូច
+    r = 239;
+    g = 68 + Math.round(mid * 80);
+    b = 68;
+  } else if (mid > 0.5 && mid > low && mid > high) {
+    // ✅ Vocal → លឿង-មាស
+    r = 250;
+    g = 204;
+    b = 21;
+  } else if (high > 0.5 && high > low && high > mid) {
+    // ✅ Midi → ស្វាយ-ខៀវ
+    r = 168;
+    g = 85;
+    b = 247;
+  } else {
+    // ✅ Blend ពណ៌តាម frequency
+    r = Math.round(low * 239 + mid * 100);
+    g = Math.round(mid * 200 + high * 80);
+    b = Math.round(high * 246 + low * 40);
+  }
+
+  // ✅ Brightness តាម amplitude (ឆ្លុះ)
+  const brightness = 0.5 + amplitude * 0.5;
+  r = Math.min(255, Math.round(r * brightness));
+  g = Math.min(255, Math.round(g * brightness));
+  b = Math.min(255, Math.round(b * brightness));
+
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+// ==================== KICK PEAK NORMALIZATION ====================
 function normalizeKickPeaks(
   normalized: Float32Array,
   rawLow: Float32Array,
   numSamples: number
 ): void {
+  if (numSamples < 10) return;
+
   const kickPeaks: number[] = [];
   const MIN_PEAK_DISTANCE = 8;
+  const SCAN_STEP = 2;
 
-  for (let i = 2; i < numSamples - 2; i++) {
+  for (let i = 2; i < numSamples - 2; i += SCAN_STEP) {
     const curr = normalized[i];
     const prev1 = normalized[i - 1];
-    const prev2 = normalized[i - 2];
     const next1 = normalized[i + 1];
-    const next2 = normalized[i + 2];
 
-    if (
-      curr > prev1 &&
-      curr > prev2 &&
-      curr > next1 &&
-      curr > next2 &&
-      curr > 0.25 &&
-      rawLow[i] > 0.35
-    ) {
+    if (curr > prev1 && curr > next1 && curr > 0.25 && rawLow[i] > 0.35) {
       if (
         kickPeaks.length === 0 ||
         i - kickPeaks[kickPeaks.length - 1] >= MIN_PEAK_DISTANCE
@@ -256,29 +246,23 @@ function normalizeKickPeaks(
   if (kickPeaks.length === 0) return;
 
   let peakSum = 0;
-  for (const idx of kickPeaks) {
-    peakSum += normalized[idx];
-  }
-  const avgPeak = peakSum / kickPeaks.length;
-
+  for (const idx of kickPeaks) peakSum += normalized[idx];
   const targetPeak = 0.95;
 
   for (const idx of kickPeaks) {
     const currentPeak = normalized[idx];
     if (currentPeak < 0.01) continue;
 
-    const scale = targetPeak / currentPeak;
-    const clampedScale = Math.min(scale, 3.0);
+    const scale = Math.min(targetPeak / currentPeak, 3.0);
+    if (Math.abs(scale - 1.0) < 0.05) continue;
 
     const RANGE = 3;
     for (let j = -RANGE; j <= RANGE; j++) {
       const k = idx + j;
       if (k < 0 || k >= numSamples) continue;
-
       const distance = Math.abs(j) / RANGE;
       const weight = 1.0 - distance * distance;
-      const factor = 1.0 + (clampedScale - 1.0) * weight;
-
+      const factor = 1.0 + (scale - 1.0) * weight;
       normalized[k] = Math.min(1.0, normalized[k] * factor);
     }
   }
@@ -329,7 +313,6 @@ function render() {
   ctx.save();
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Pure black background
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, cssWidth, cssHeight);
 
@@ -337,7 +320,6 @@ function render() {
   const needleX = cssWidth / 2;
   const pixelsPerSec = cssWidth / visibleSecs.value;
 
-  // ================= DECK A (TOP) =================
   drawDjayProWaveform(
     ctx,
     props.deckA,
@@ -350,7 +332,6 @@ function render() {
     1
   );
 
-  // ================= DECK B (BOTTOM) =================
   drawDjayProWaveform(
     ctx,
     props.deckB,
@@ -363,7 +344,6 @@ function render() {
     2
   );
 
-  // ================= CENTER DIVIDER =================
   ctx.strokeStyle = "rgba(60, 60, 65, 0.9)";
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -371,14 +351,13 @@ function render() {
   ctx.lineTo(cssWidth, halfH);
   ctx.stroke();
 
-  // ================= RED PLAYHEAD =================
   drawPlayhead(ctx, needleX, 0, cssHeight, halfH);
 
   ctx.restore();
   animFrameId = requestAnimationFrame(render);
 }
 
-// ==================== DJAY PRO WAVEFORM (DRUM DOMINANT + CLEAR GRID) ====================
+// ==================== WAVEFORM DRAW ====================
 function drawDjayProWaveform(
   ctx: CanvasRenderingContext2D,
   deck: DeckState,
@@ -394,8 +373,6 @@ function drawDjayProWaveform(
   const peaks = deck.waveform;
   const effBpm = deck.baseBpm * (1.0 + (deck.pitch || 0) / 100);
 
-  
-  // ==================== BUILD ENVELOPE ====================
   const step = 1.5;
   const numSamples = Math.ceil(width / step) + 1;
 
@@ -407,9 +384,10 @@ function drawDjayProWaveform(
   const upper = envCache.upper;
   const lower = envCache.lower;
 
-  // ==================== PASS 1: SAMPLE ====================
+  // ==================== PASS 1: SAMPLE + BAND DATA ====================
   const rawAmp = new Float32Array(numSamples);
   const rawLow = new Float32Array(numSamples);
+  const bandData: WaveformPeak[] = new Array(numSamples);
 
   for (let i = 0; i < numSamples; i++) {
     const x = i * step;
@@ -418,15 +396,17 @@ function drawDjayProWaveform(
     if (t < 0 || t > duration) {
       rawAmp[i] = 0;
       rawLow[i] = 0;
+      bandData[i] = { low: 0, mid: 0, high: 0 };
       continue;
     }
 
     const band = sampleWaveform(peaks, t, duration);
     rawLow[i] = band.low || 0;
     rawAmp[i] = getDrumAmplitude(band);
+    bandData[i] = band;
   }
 
-  // ==================== GLOBAL PEAK (ថេរ មិនរីក-រួម) ====================
+  // ==================== GLOBAL PEAK ====================
   if (globalPeakCache.deckId !== deck.title || globalPeakCache.peakAmp <= 0.01) {
     let maxAmp = 0.01;
     if (peaks && peaks.length > 0) {
@@ -443,10 +423,10 @@ function drawDjayProWaveform(
   const peakAmp = globalPeakCache.peakAmp;
   const normFactor = 1.0 / peakAmp;
 
-  // ==================== PASS 2: NORMALIZE (STABLE) ====================
-  const gamma = 0.95;
-  const ampScale = 0.85;
-  const floor = 0.12;
+  // ==================== PASS 2: NORMALIZE ====================
+  const gamma = 0.85;     // ✅ ទាបជាងមុន → Kick ខ្ពស់ជាង
+  const ampScale = 0.95;  // ✅ ខ្ពស់ជាងមុន → Kick ខ្ពស់
+  const floor = 0.10;
 
   const normalized = new Float32Array(numSamples);
   for (let i = 0; i < numSamples; i++) {
@@ -460,10 +440,10 @@ function drawDjayProWaveform(
 
   normalizeKickPeaks(normalized, rawLow, numSamples);
 
-  // ==================== PASS 3: TRANSIENT DETECTION ====================
+  // ==================== PASS 3: TRANSIENT ====================
   const transientBoost = new Float32Array(numSamples);
-  const ONSET_THRESHOLD = 0.12;
-  const DECAY_RATE = 0.75;
+  const ONSET_THRESHOLD = 0.10;
+  const DECAY_RATE = 0.80;
 
   let activeBoost = 0;
   for (let i = 0; i < numSamples; i++) {
@@ -471,7 +451,7 @@ function drawDjayProWaveform(
     const prev = i > 0 ? normalized[i - 1] : 0;
 
     const diff = current - prev;
-    if (diff > ONSET_THRESHOLD && current > 0.35) {
+    if (diff > ONSET_THRESHOLD && current > 0.30) {
       activeBoost = 1.0;
     }
 
@@ -483,18 +463,19 @@ function drawDjayProWaveform(
     transientBoost[i] = activeBoost;
   }
 
-  // ==================== PASS 4: SOFT GATE + APPLY ====================
+  // ==================== PASS 4: APPLY ====================
   for (let i = 0; i < numSamples; i++) {
-    const boosted = normalized[i] + transientBoost[i] * 0.35;
+    const boosted = normalized[i] + transientBoost[i] * 0.40;
     const clamped = Math.min(1.0, boosted);
-    const spikeFactor = transientBoost[i] > 0.5 ? 1.15 : 1.0;
+    const spikeFactor = transientBoost[i] > 0.5 ? 1.20 : 1.0;
     let finalAmp = Math.min(1.0, clamped * spikeFactor);
 
+    // ✅ Soft gate តែបន្តិច
     const lowValue = rawLow[i] * normFactor;
-    if (lowValue < 0.20) {
-      finalAmp *= 0.70;
-    } else if (lowValue < 0.40) {
-      finalAmp *= 0.85;
+    if (lowValue < 0.15) {
+      finalAmp *= 0.75;
+    } else if (lowValue < 0.35) {
+      finalAmp *= 0.90;
     }
 
     const h = Math.max(0.8, finalAmp * maxAmp * ampScale);
@@ -502,36 +483,37 @@ function drawDjayProWaveform(
     lower[i] = centerY + h;
   }
 
-  // ==================== DRAW WAVEFORM ====================
-  ctx.save();
+  // ==================== DRAW WAVEFORM (RGB COLOR) ====================
+  const deckColor: "cyan" | "rose" = deckNum === 1 ? "cyan" : "rose";
 
-  const fillGrad = ctx.createLinearGradient(0, centerY - maxAmp, 0, centerY + maxAmp);
-  fillGrad.addColorStop(0.0, "rgba(80, 180, 255, 0.95)");
-  fillGrad.addColorStop(0.35, "rgba(80, 255, 180, 0.95)");
-  fillGrad.addColorStop(0.55, "rgba(220, 255, 120, 0.95)");
-  fillGrad.addColorStop(0.78, "rgba(255, 200, 80, 0.95)");
-  fillGrad.addColorStop(1.0, "rgba(255, 80, 80, 1.0)");
+  for (let i = 0; i < numSamples; i++) {
+    const x = i * step;
+    const yTop = upper[i];
+    const yBot = lower[i];
+    const h = (yBot - yTop) / 2;
 
-  ctx.beginPath();
-  ctx.moveTo(0, upper[0]);
-  for (let i = 1; i < numSamples; i++) {
-    ctx.lineTo(i * step, upper[i]);
+    if (h < 0.5) continue;
+
+    const played = i / numSamples <= deck.progress;
+    const alpha = played ? 1.0 : 0.55;
+
+    // ✅ ពណ៌ RGB តាម frequency
+    const barColor = getSliceColor(bandData[i], deckColor);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = barColor;
+    ctx.fillRect(x, yTop, step + 0.5, yBot - yTop);
+    ctx.restore();
   }
-  ctx.lineTo(width, upper[numSamples - 1]);
-  for (let i = numSamples - 1; i >= 0; i--) {
-    ctx.lineTo(i * step, lower[i]);
-  }
-  ctx.closePath();
 
-  ctx.fillStyle = fillGrad;
-  ctx.fill();
-
+  // Dim unplayed
   if (needleX < width) {
+    ctx.save();
     ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
     ctx.fillRect(needleX, 0, width - needleX, ctx.canvas.height);
+    ctx.restore();
   }
-
-  ctx.restore();
 
   // ==================== KICK SPIKE HIGHLIGHTS ====================
   ctx.save();
@@ -542,12 +524,13 @@ function drawDjayProWaveform(
     if (boost < 0.4) continue;
 
     const lowValue = rawLow[i] * normFactor;
-    if (lowValue < 0.40) continue;
+    if (lowValue < 0.35) continue;
 
     const x = i * step;
     const h = centerY - upper[i];
     if (h < 4) continue;
 
+    // ✅ RGB glow ក្រហម
     ctx.strokeStyle = `rgba(255, 100, 100, ${boost * 0.7})`;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -555,24 +538,25 @@ function drawDjayProWaveform(
     ctx.lineTo(x, centerY + h * 1.15);
     ctx.stroke();
 
-    ctx.fillStyle = `rgba(255, 150, 150, ${boost * 0.5})`;
+    // ✅ Sharp triangle
+    ctx.fillStyle = `rgba(255, 150, 150, ${boost * 0.6})`;
     ctx.beginPath();
     ctx.moveTo(x - 2.5, centerY - h);
     ctx.lineTo(x + 2.5, centerY - h);
-    ctx.lineTo(x, centerY - h * 1.25);
+    ctx.lineTo(x, centerY - h * 1.30);
     ctx.closePath();
     ctx.fill();
   }
 
   ctx.restore();
 
-  // ==================== SHARP OUTLINE ====================
+  // ==================== OUTLINE ====================
   ctx.save();
   ctx.lineJoin = "miter";
   ctx.lineCap = "butt";
 
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+  ctx.lineWidth = 1.0;
   ctx.beginPath();
   ctx.moveTo(0, upper[0]);
   for (let i = 1; i < numSamples; i++) {
@@ -580,7 +564,7 @@ function drawDjayProWaveform(
   }
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, lower[0]);
@@ -591,9 +575,9 @@ function drawDjayProWaveform(
 
   ctx.restore();
 
-  // ==================== CENTER SPINE ====================
+  // Center spine
   ctx.save();
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, centerY);
@@ -601,7 +585,7 @@ function drawDjayProWaveform(
   ctx.stroke();
   ctx.restore();
 
-  // ==================== VERTICAL GRID LINES ====================
+  // ==================== GRID LINES ====================
   if (effBpm > 20 && duration > 0) {
     const secPerBeat = 60.0 / effBpm;
     const secPerBar = secPerBeat * 4;
@@ -611,10 +595,10 @@ function drawDjayProWaveform(
     const firstBar = Math.max(0, Math.floor(timeStart / secPerBar));
     const lastBar = Math.ceil(timeEnd / secPerBar);
 
-    // Beat lines
     const firstBeat = Math.max(0, Math.floor(timeStart / secPerBeat));
     const lastBeat = Math.ceil(timeEnd / secPerBeat);
 
+    // Beat lines
     ctx.save();
     ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
     ctx.lineWidth = 1;
@@ -802,19 +786,19 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Drum Legend -->
+      <!-- Legend -->
       <div class="flex items-center gap-3 text-[8px] font-sans font-semibold">
-        <div class="flex items-center gap-1" title="Kick Drum (ភ្លេងបុក - ខ្ពស់ជាងគេ)">
+        <div class="flex items-center gap-1" title="Kick Drum">
           <span class="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_#ef4444]"></span>
           <span class="text-red-400 font-bold">KICK</span>
         </div>
-        <div class="flex items-center gap-1" title="Snare (ស្គរ - កណ្តាល)">
-          <span class="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_#22c55e]"></span>
-          <span class="text-green-400 font-bold">SNARE</span>
+        <div class="flex items-center gap-1" title="Vocal">
+          <span class="w-2 h-2 rounded-full bg-yellow-500 shadow-[0_0_5px_#eab308]"></span>
+          <span class="text-yellow-400 font-bold">VOCAL</span>
         </div>
-        <div class="flex items-center gap-1" title="Clap (ខ្ទាស់ដៃ - ខ្ពស់)">
-          <span class="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_5px_#3b82f6]"></span>
-          <span class="text-blue-400 font-bold">CLAP</span>
+        <div class="flex items-center gap-1" title="Midi">
+          <span class="w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_5px_#a855f7]"></span>
+          <span class="text-purple-400 font-bold">MIDI</span>
         </div>
       </div>
 
@@ -822,7 +806,7 @@ onUnmounted(() => {
       <div class="flex items-center gap-1">
         <span class="text-zinc-500 text-[6.5px]">ZOOM:</span>
         <button
-          v-for="z in [4, 8, 16]" :key="'zoom-' + z"
+          v-for="z in ZOOM_LEVELS" :key="'zoom-' + z"
           @click="visibleSecs = z"
           class="px-1.5 py-[1px] rounded text-[7px] font-bold border transition-all cursor-pointer"
           :class="visibleSecs === z
