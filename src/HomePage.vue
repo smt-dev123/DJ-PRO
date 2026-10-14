@@ -21,6 +21,8 @@ const {
   syncDeck,
   toggleKeyLock,
   setVolume,
+  setDeckEq,      
+  setDeckGain,
   setPitch,
   nudgePitch,
   resetPitch,
@@ -51,7 +53,12 @@ onMounted(async () => {
         // Check if dropped inside Deck A
         if (deckARef.value?.$el) {
           const rect = deckARef.value.$el.getBoundingClientRect();
-          if (cssX >= rect.left && cssX <= rect.right && cssY >= rect.top && cssY <= rect.bottom) {
+          if (
+            cssX >= rect.left &&
+            cssX <= rect.right &&
+            cssY >= rect.top &&
+            cssY <= rect.bottom
+          ) {
             loadFileToDeck("A", paths[0]);
             return;
           }
@@ -60,7 +67,12 @@ onMounted(async () => {
         // Check if dropped inside Deck B
         if (deckBRef.value?.$el) {
           const rect = deckBRef.value.$el.getBoundingClientRect();
-          if (cssX >= rect.left && cssX <= rect.right && cssY >= rect.top && cssY <= rect.bottom) {
+          if (
+            cssX >= rect.left &&
+            cssX <= rect.right &&
+            cssY >= rect.top &&
+            cssY <= rect.bottom
+          ) {
             loadFileToDeck("B", paths[0]);
             return;
           }
@@ -89,26 +101,47 @@ onUnmounted(() => {
     class="h-screen w-screen bg-[#06070a] text-zinc-200 select-none flex flex-col p-2.5 font-mono overflow-hidden"
   >
     <!-- ================= 1. TOP HEADER APP BAR ================= -->
-    <header class="flex items-center justify-between border-b border-zinc-800/80 pb-2 mb-2 shrink-0">
+    <header
+      class="flex items-center justify-between border-b border-zinc-800/80 pb-2 mb-2 shrink-0"
+    >
       <!-- App Brand & Title -->
       <div class="flex items-center gap-2.5">
         <div class="relative flex items-center justify-center">
-          <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]"></span>
-          <span class="absolute w-4 h-4 rounded-full bg-cyan-400/20 animate-ping"></span>
+          <span
+            class="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]"
+          ></span>
+          <span
+            class="absolute w-4 h-4 rounded-full bg-cyan-400/20 animate-ping"
+          ></span>
         </div>
-        <h1 class="text-sm font-black tracking-widest text-zinc-100 uppercase flex items-center gap-1.5">
+        <h1
+          class="text-sm font-black tracking-widest text-zinc-100 uppercase flex items-center gap-1.5"
+        >
           DJ PRO
-          <span class="text-cyan-400 text-[8.5px] px-1.5 py-0.5 border border-cyan-500/40 rounded-md bg-cyan-950/40 font-bold">
+          <span
+            class="text-cyan-400 text-[8.5px] px-1.5 py-0.5 border border-cyan-500/40 rounded-md bg-cyan-950/40 font-bold"
+          >
             STUDIO EDITION
           </span>
         </h1>
       </div>
 
       <!-- Center Master Tempo / Clock Bar -->
-      <div class="hidden sm:flex items-center gap-4 bg-[#0a0b10] border border-zinc-800/80 px-3 py-1 rounded-full text-[9px]">
+      <div
+        class="hidden sm:flex items-center gap-4 bg-[#0a0b10] border border-zinc-800/80 px-3 py-1 rounded-full text-[9px]"
+      >
         <div class="flex items-center gap-1.5">
           <span class="text-zinc-500">MASTER CLOCK:</span>
-          <span class="font-black text-white font-mono">{{ deckA.isPlaying ? deckA.bpm.toFixed(1) : (deckB.isPlaying ? deckB.bpm.toFixed(1) : "126.0") }} BPM</span>
+          <span class="font-black text-white font-mono"
+            >{{
+              deckA.isPlaying
+                ? deckA.bpm.toFixed(1)
+                : deckB.isPlaying
+                  ? deckB.bpm.toFixed(1)
+                  : "126.0"
+            }}
+            BPM</span
+          >
         </div>
         <span class="text-zinc-700">|</span>
         <div class="flex items-center gap-1.5">
@@ -119,21 +152,27 @@ onUnmounted(() => {
 
       <!-- Right Audio Engine Status -->
       <div class="flex items-center gap-2">
-        <div class="text-[9px] text-zinc-400 bg-[#0c0d13] border border-zinc-800 px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]"></span>
+        <div
+          class="text-[9px] text-zinc-400 bg-[#0c0d13] border border-zinc-800 px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs"
+        >
+          <span
+            class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]"
+          ></span>
           <span>AUDIO ENGINE:</span>
-          <span class="text-emerald-400 font-bold">WASAPI REALTIME (48kHz)</span>
+          <span class="text-emerald-400 font-bold"
+            >WASAPI REALTIME (48kHz)</span
+          >
         </div>
       </div>
     </header>
 
     <!-- ================= 2. WAVEFORM OVERVIEW SECTION ================= -->
     <section class="mb-2 shrink-0">
-      <WaveformDisplay 
-        :deck-a="deckA" 
-        :deck-b="deckB" 
-        @seek-a="seekDeck('A', $event)" 
-        @seek-b="seekDeck('B', $event)" 
+      <WaveformDisplay
+        :deck-a="deckA"
+        :deck-b="deckB"
+        @seek-a="seekDeck('A', $event)"
+        @seek-b="seekDeck('B', $event)"
       />
     </section>
 
@@ -168,6 +207,10 @@ onUnmounted(() => {
         @crossfade="setCrossfader"
         @volume-a="setVolume('A', $event)"
         @volume-b="setVolume('B', $event)"
+        @eq-a="(h, m, l, f) => setDeckEq('A', h, m, l, f)"
+        @eq-b="(h, m, l, f) => setDeckEq('B', h, m, l, f)"
+        @gain-a="setDeckGain('A', $event)"
+        @gain-b="setDeckGain('B', $event)"
       />
 
       <!-- Deck B (Right) -->

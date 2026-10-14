@@ -19,17 +19,6 @@ interface WaveformChunkPayload {
   totalChunks: number;
 }
 
-interface WaveformCompletePayload {
-  deckId: "A" | "B";
-}
-
-interface TrackReadyPayload {
-  deckId: "A" | "B";
-  title: string;
-  duration: string;
-  durationSecs: number;
-}
-
 export function useDjEngine() {
   const deckA = reactive<DeckState>({
     id: "A",
@@ -48,7 +37,7 @@ export function useDjEngine() {
     eqMid: 0,
     eqLow: 0,
     filter: 0,
-    gain: 50,
+    gain: 0,
     keyLock: true,
     isSynced: false,
     cueActive: false,
@@ -74,7 +63,7 @@ export function useDjEngine() {
     eqMid: 0,
     eqLow: 0,
     filter: 0,
-    gain: 50,
+    gain: 0,
     keyLock: true,
     isSynced: false,
     cueActive: false,
@@ -87,52 +76,36 @@ export function useDjEngine() {
   const masterVolume = ref(0.85);
   const isDecoding = ref<{ A: boolean; B: boolean }>({ A: false, B: false });
 
-  // ==================== EVENT LISTENERS ====================
   let unlistenChunk: (() => void) | null = null;
   let unlistenComplete: (() => void) | null = null;
   let unlistenReady: (() => void) | null = null;
   let tickerId: any = null;
 
   async function setupListeners() {
-    // ✅ Waveform chunk → Append ភ្លាម
     unlistenChunk = await listen<WaveformChunkPayload>("waveform-chunk", (event) => {
-      const { deckId, chunk, chunkIndex, totalChunks } = event.payload;
+      const { deckId, chunk } = event.payload;
       const deck = deckId === "A" ? deckA : deckB;
-
-      // ✅ Append chunk ទៅ waveform ដែលមាន
       deck.waveform = [...deck.waveform, ...chunk];
-
-      console.log(
-        `[Waveform] Deck ${deckId}: chunk ${chunkIndex + 1}/${totalChunks} (${deck.waveform.length} peaks)`
-      );
     });
 
-    // ✅ Waveform complete
-    unlistenComplete = await listen<WaveformCompletePayload>(
-      "waveform-complete",
-      (event) => {
-        const { deckId } = event.payload;
-        const deck = deckId === "A" ? deckA : deckB;
-        console.log(`[Waveform] Deck ${deckId}: ✅ COMPLETE (${deck.waveform.length} peaks)`);
-      }
-    );
+    unlistenComplete = await listen<any>("waveform-complete", (event) => {
+      const { deckId } = event.payload;
+      const deck = deckId === "A" ? deckA : deckB;
+      console.log(`[Waveform] Deck ${deckId}: ✅ COMPLETE (${deck.waveform.length} peaks)`);
+    });
 
-    // ✅ Track ready
-    unlistenReady = await listen<TrackReadyPayload>("track-ready", (event) => {
+    unlistenReady = await listen<any>("track-ready", (event) => {
       const { deckId, title, duration, durationSecs } = event.payload;
       const deck = deckId === "A" ? deckA : deckB;
-
       deck.title = title;
       deck.totalTime = duration;
       deck.durationSecs = durationSecs;
       deck.status = "READY";
-      deck.waveform = []; // ✅ Reset
-
-      console.log(`[Track] Deck ${deckId}: ✅ READY — PLAY NOW`);
+      deck.waveform = [];
+      console.log(`[Track] Deck ${deckId}: ✅ READY`);
     });
   }
 
-  // ==================== PLAYBACK TICKER ====================
   function updatePlaybackPositions() {
     if (deckA.isPlaying) {
       invoke<any>("get_deck_playback", { deckId: "A" })
@@ -168,7 +141,7 @@ export function useDjEngine() {
     if (tickerId) clearInterval(tickerId);
   });
 
-  // ==================== LOAD TRACKS ====================
+  // ==================== LOAD ====================
   async function openTrack(deckId: DeckId) {
     if (isDecoding.value[deckId]) return;
     const selected = await open({
@@ -198,11 +171,7 @@ export function useDjEngine() {
     deck.waveform = [];
 
     try {
-      await invoke<TrackLoadedFast>("load_track_fast", {
-        deckId,
-        path: track.path,
-      });
-      // Event "track-ready" នឹង update deck state
+      await invoke<TrackLoadedFast>("load_track_fast", { deckId, path: track.path });
     } catch (err) {
       console.error(`[Deck ${deckId}] Load error:`, err);
       deck.status = "ERROR";
@@ -226,11 +195,7 @@ export function useDjEngine() {
     deck.waveform = [];
 
     try {
-      await invoke<TrackLoadedFast>("load_track_fast", {
-        deckId,
-        path: filePath,
-      });
-      // Event "track-ready" នឹង update deck state
+      await invoke<TrackLoadedFast>("load_track_fast", { deckId, path: filePath });
     } catch (err) {
       console.error(`[Deck ${deckId}] Load error:`, err);
       deck.status = "ERROR";
@@ -239,7 +204,7 @@ export function useDjEngine() {
     }
   }
 
-  // ==================== CONTROLS ====================
+  // ==================== PLAYBACK ====================
   async function seekDeck(deckId: DeckId, ratio: number) {
     const deck = deckId === "A" ? deckA : deckB;
     const clampedRatio = Math.max(0, Math.min(1, ratio));
@@ -261,7 +226,6 @@ export function useDjEngine() {
       deck.status = playing ? "PLAYING" : "READY";
     } catch {
       deck.isPlaying = !deck.isPlaying;
-      deck.status = deck.isPlaying ? "PLAYING" : "READY";
     }
   }
 
@@ -270,9 +234,7 @@ export function useDjEngine() {
     deck.isPlaying = false;
     deck.cueActive = true;
     await seekDeck(deckId, 0.0);
-    setTimeout(() => {
-      deck.cueActive = false;
-    }, 200);
+    setTimeout(() => { deck.cueActive = false; }, 200);
   }
 
   async function syncDeck(deckId: DeckId) {
@@ -281,9 +243,7 @@ export function useDjEngine() {
     target.bpm = source.bpm;
     target.pitch = Number((((source.bpm / target.baseBpm) - 1) * 100).toFixed(1));
     target.isSynced = true;
-    setTimeout(() => {
-      target.isSynced = false;
-    }, 1500);
+    setTimeout(() => { target.isSynced = false; }, 1500);
   }
 
   async function toggleKeyLock(deckId: DeckId) {
@@ -291,6 +251,7 @@ export function useDjEngine() {
     deck.keyLock = !deck.keyLock;
   }
 
+  // ==================== VOLUME ====================
   async function setVolume(deckId: DeckId, vol: number) {
     const deck = deckId === "A" ? deckA : deckB;
     deck.volume = Math.max(0, Math.min(1, vol));
@@ -299,6 +260,37 @@ export function useDjEngine() {
     } catch {}
   }
 
+  // ==================== EQ & GAIN ====================
+  async function setDeckEq(
+    deckId: DeckId,
+    high: number,
+    mid: number,
+    low: number,
+    filter: number
+  ) {
+    const deck = deckId === "A" ? deckA : deckB;
+    deck.eqHigh = high;
+    deck.eqMid = mid;
+    deck.eqLow = low;
+    deck.filter = filter;
+    try {
+      await invoke("set_deck_eq", { deckId, high, mid, low, filter });
+    } catch (err) {
+      console.error(`[EQ ${deckId}] Error:`, err);
+    }
+  }
+
+  async function setDeckGain(deckId: DeckId, gain: number) {
+    const deck = deckId === "A" ? deckA : deckB;
+    deck.gain = gain;
+    try {
+      await invoke("set_deck_gain", { deckId, gain });
+    } catch (err) {
+      console.error(`[Gain ${deckId}] Error:`, err);
+    }
+  }
+
+  // ==================== PITCH ====================
   function setPitch(deckId: DeckId, pitchVal: number) {
     const deck = deckId === "A" ? deckA : deckB;
     deck.pitch = Number(pitchVal.toFixed(1));
@@ -335,9 +327,12 @@ export function useDjEngine() {
     syncDeck,
     toggleKeyLock,
     setVolume,
+    setDeckEq,
+    setDeckGain,
     setPitch,
     nudgePitch,
     resetPitch,
     setCrossfader,
+    
   };
 }

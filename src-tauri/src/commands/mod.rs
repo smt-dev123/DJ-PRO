@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::{State, AppHandle, Emitter};
 use crate::audio::state::MixerState;
 use crate::audio::decoder::{
-    decode_samples_only, extract_waveform_progressive, WaveBandPeak,
+    decode_samples_only, extract_waveform_progressive,
 };
 
 #[derive(Serialize)]
@@ -43,7 +43,7 @@ pub struct DeckPlaybackStatus {
     pub remaining_time_str: String,
 }
 
-// ==================== LOAD + PROGRESSIVE WAVEFORM ====================
+// ==================== LOAD TRACK ====================
 #[tauri::command]
 pub async fn load_track_fast(
     deck_id: String,
@@ -51,7 +51,6 @@ pub async fn load_track_fast(
     app: AppHandle,
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<TrackLoadedFast, String> {
-    // ==================== PHASE 1: DECODE SAMPLES ====================
     let path_clone = path.clone();
     let decoded = tokio::task::spawn_blocking(move || decode_samples_only(&path_clone))
         .await
@@ -62,14 +61,9 @@ pub async fn load_track_fast(
     let sample_rate = decoded.sample_rate;
     let channels = decoded.channels;
 
-    // ✅ Update deck state ភ្លាម
     {
         let mut lock = state.lock().map_err(|e| e.to_string())?;
-        let deck = if deck_id == "A" {
-            &mut lock.deck_a
-        } else {
-            &mut lock.deck_b
-        };
+        let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
 
         deck.samples = decoded.samples;
         deck.position = 0;
@@ -86,7 +80,6 @@ pub async fn load_track_fast(
     let secs = (duration_secs as u32) % 60;
     let duration_str = format!("{:02}:{:02}", mins, secs);
 
-    // ✅ Emit track-ready event
     let _ = app.emit(
         "track-ready",
         serde_json::json!({
@@ -97,39 +90,25 @@ pub async fn load_track_fast(
         }),
     );
 
-    // ==================== PHASE 2: PROGRESSIVE WAVEFORM ====================
+    // Progressive waveform in background
     let app_clone = app.clone();
     let state_clone = Arc::clone(&state);
-    let deck_id_for_analysis = deck_id.clone();
-    let deck_id_for_return = deck_id.clone();
-    let title_for_return = title.clone();
-    let duration_str_for_return = duration_str.clone();
+    let deck_id_analysis = deck_id.clone();
 
     tokio::task::spawn_blocking(move || {
-        // យក samples មក analyze
         let (samples, sample_rate, channels, duration_secs) = {
             let lock = match state_clone.lock() {
                 Ok(g) => g,
                 Err(_) => return,
             };
-            let deck = if deck_id_for_analysis == "A" {
-                &lock.deck_a
-            } else {
-                &lock.deck_b
-            };
-            (
-                deck.samples.clone(),
-                deck.sample_rate,
-                deck.channels,
-                deck.duration_secs,
-            )
+            let deck = if deck_id_analysis == "A" { &lock.deck_a } else { &lock.deck_b };
+            (deck.samples.clone(), deck.sample_rate, deck.channels, deck.duration_secs)
         };
 
         let total_chunks = 10;
-        let deck_id_inner = deck_id_for_analysis.clone();
+        let deck_id_inner = deck_id_analysis.clone();
         let app_inner = app_clone.clone();
 
-        // ✅ Extract waveform ជា chunk និង emit រាល់ chunk
         let peaks = extract_waveform_progressive(
             &samples,
             sample_rate,
@@ -149,58 +128,32 @@ pub async fn load_track_fast(
             },
         );
 
-        // ✅ Update final state
         {
             let mut lock = match state_clone.lock() {
                 Ok(g) => g,
                 Err(_) => return,
             };
-            let deck = if deck_id_for_analysis == "A" {
-                &mut lock.deck_a
-            } else {
-                &mut lock.deck_b
-            };
+            let deck = if deck_id_analysis == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
             deck.waveform_peaks = peaks;
             deck.waveform_ready = true;
         }
 
-        // ✅ Emit complete event
         let _ = app_clone.emit(
             "waveform-complete",
-            serde_json::json!({
-                "deckId": deck_id_for_analysis,
-            }),
+            serde_json::json!({ "deckId": deck_id_analysis }),
         );
-
-        println!("[Analysis] ✅ Deck {} waveform complete", deck_id_for_analysis);
     });
 
-    // ✅ Return ភ្លាម
     Ok(TrackLoadedFast {
-        title: title_for_return,
-        duration: duration_str_for_return,
+        title,
+        duration: duration_str,
         duration_secs,
         sample_rate,
-        deck_id: deck_id_for_return,
+        deck_id,
     })
 }
 
-// ==================== GET WAVEFORM (Fallback) ====================
-#[tauri::command]
-pub fn get_waveform(
-    deck_id: String,
-    state: State<'_, Arc<Mutex<MixerState>>>,
-) -> Result<Option<Vec<WaveBandPeak>>, String> {
-    let lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" { &lock.deck_a } else { &lock.deck_b };
-    if deck.waveform_ready && !deck.waveform_peaks.is_empty() {
-        Ok(Some(deck.waveform_peaks.clone()))
-    } else {
-        Ok(None)
-    }
-}
-
-// ==================== PLAYBACK CONTROLS ====================
+// ==================== PLAYBACK ====================
 #[tauri::command]
 pub fn seek_deck(
     deck_id: String,
@@ -249,6 +202,7 @@ pub fn toggle_play(
     Ok(deck.is_playing)
 }
 
+// ==================== VOLUME ====================
 #[tauri::command]
 pub fn set_deck_volume(
     deck_id: String,
@@ -257,7 +211,38 @@ pub fn set_deck_volume(
 ) -> Result<(), String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
     let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
-    deck.volume = vol;
+    deck.volume = vol.clamp(0.0, 1.0);
+    Ok(())
+}
+
+// ==================== EQ & GAIN ====================
+#[tauri::command]
+pub fn set_deck_eq(
+    deck_id: String,
+    high: f32,
+    mid: f32,
+    low: f32,
+    filter: f32,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+    deck.eq_high = high.clamp(-100.0, 100.0);
+    deck.eq_mid = mid.clamp(-100.0, 100.0);
+    deck.eq_low = low.clamp(-100.0, 100.0);
+    deck.filter = filter.clamp(-100.0, 100.0);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_deck_gain(
+    deck_id: String,
+    gain: f32,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+    deck.gain = gain.clamp(-100.0, 100.0);
     Ok(())
 }
 
@@ -267,7 +252,7 @@ pub fn set_crossfader(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<(), String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    lock.crossfader = val;
+    lock.crossfader = val.clamp(0.0, 1.0);
     Ok(())
 }
 

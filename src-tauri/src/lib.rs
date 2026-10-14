@@ -15,9 +15,10 @@ pub fn run() {
         .manage(shared_state)
         .invoke_handler(tauri::generate_handler![
             load_track_fast,
-            get_waveform,
             toggle_play,
             set_deck_volume,
+            set_deck_eq,
+            set_deck_gain,
             set_crossfader,
             seek_deck,
             get_deck_playback,

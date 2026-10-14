@@ -9,28 +9,28 @@ export interface WaveformPeak {
 export type WaveBand = WaveformPeak;
 
 export interface DeckState {
-  id: DeckId;
+  id: "A" | "B";
   isPlaying: boolean;
   volume: number;
-  pitch: number;      // in percent (-8 to +8)
-  bpm: number;
+  pitch: number;
   baseBpm: number;
+  bpm: number;
   currentTime: string;
   totalTime: string;
   title: string;
   artist: string;
   key: string;
-  status: "EMPTY" | "LOADING..." | "READY" | "PLAYING" | "PAUSED" | "STOPPED" | "ERROR";
-  eqHigh: number;     // -100 to 100 (0 = Center)
-  eqMid: number;
-  eqLow: number;
-  filter: number;     // -100 (Low Pass) to +100 (High Pass)
-  gain: number;       // 0 to 100
+  status: string;
+  eqHigh: number; 
+  eqMid: number;  
+  eqLow: number;  
+  filter: number; 
+  gain: number;   
   keyLock: boolean;
   isSynced: boolean;
   cueActive: boolean;
-  progress: number;        // 0.0 to 1.0 (seek progress)
-  waveform: WaveBand[];    // High density multi-band slices (ភ្លេង, មេឌី, ច្រៀង)
+  progress: number;
+  waveform: WaveformPeak[];
   durationSecs: number;
 }
 
