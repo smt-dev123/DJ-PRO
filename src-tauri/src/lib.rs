@@ -1,0 +1,27 @@
+pub mod audio;
+pub mod commands;
+
+use audio::AudioEngine;
+use commands::*;
+
+pub fn run() {
+    let engine = AudioEngine::new().expect("Failed to initialize audio engine");
+    let shared_state = engine.state.clone();
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(shared_state)
+        .manage(engine)
+        .invoke_handler(tauri::generate_handler![
+            load_track,
+            toggle_play,
+            set_deck_volume,
+            set_crossfader,
+            seek_deck,
+            get_deck_playback,
+            get_system_drives,
+            scan_folder_tracks
+        ])
+        .run(tauri::generate_context!())
+        .expect("Error while running tauri application");
+}
