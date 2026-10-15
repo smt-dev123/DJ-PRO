@@ -29,12 +29,16 @@ const {
   setDeckFxType,
   setDeckFxAmount,
   setDeckFxActive,
+  updateFxParams,
   setPitch,
   nudgePitch,
   resetPitch,
   setCrossfader,
   triggerFxOut,
   cancelFxOut,
+  landingSettingsA,
+  landingSettingsB,
+  updateLandingSettings
 } = useDjEngine();
 
 const deckARef = ref<any>(null);
@@ -185,13 +189,14 @@ onUnmounted(() => {
     </section>
 
     <!-- ================= 3. HARDWARE CONSOLE (DECK A | MIXER | DECK B) ================= -->
-    <main class="flex items-stretch gap-2.5 mb-2.5 min-h-[340px] shrink-0">
+    <main class="flex items-stretch gap-2.5 mb-2.5 h-[400px] shrink-0">
       <!-- Deck A (Left) -->
       <Deck
         ref="deckARef"
         class="flex-1 min-w-0"
         :deck="deckA"
         color="cyan"
+        :landing-settings="landingSettingsA"
         @fx-out="(fxType, duration) => triggerFxOut('A', fxType, duration)"
         @cancel-fx-out="cancelFxOut('A')"
         @open="openTrack('A')"
@@ -211,6 +216,8 @@ onUnmounted(() => {
         @fx-type="setDeckFxType('A', $event)"
         @fx-amount="setDeckFxAmount('A', $event)"
         @fx-active="setDeckFxActive('A', $event)"
+        @update-fx-params="updateFxParams('A', $event)"
+        @update-landing-settings="(fxType, settings) => updateLandingSettings('A', fxType, settings)"
       />
 
       <!-- Center Hardware Mixer -->
@@ -235,6 +242,7 @@ onUnmounted(() => {
         class="flex-1 min-w-0"
         :deck="deckB"
         color="rose"
+        :landing-settings="landingSettingsB"
         @fx-out="(fxType, duration) => triggerFxOut('B', fxType, duration)"
         @cancel-fx-out="cancelFxOut('B')"
         @open="openTrack('B')"
@@ -254,6 +262,8 @@ onUnmounted(() => {
         @fx-type="setDeckFxType('B', $event)"
         @fx-amount="setDeckFxAmount('B', $event)"
         @fx-active="setDeckFxActive('B', $event)"
+        @update-fx-params="updateFxParams('B', $event)"
+        @update-landing-settings="(fxType, settings) => updateLandingSettings('B', fxType, settings)"
       />
     </main>
 

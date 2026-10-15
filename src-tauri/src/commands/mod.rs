@@ -1,5 +1,5 @@
 use crate::audio::decoder::{decode_samples_only, extract_waveform_progressive};
-use crate::audio::fx::{FilterMode, FxParams, FxType};
+use crate::audio::fx::{FilterMode, FxParams, FxType, ReverbRoom, TimeDivision};
 use crate::audio::state::MixerState;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -51,7 +51,7 @@ pub async fn load_track_fast(
     app: AppHandle,
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<TrackLoadedFast, String> {
-     // ✅ Debug — បង្ហាញ path ពិត
+    // ✅ Debug — បង្ហាញ path ពិត
     println!("[Load] Deck {} → path: {:?}", deck_id, path);
 
     // ✅ ពិនិត្យ file មានឬទេ
@@ -62,13 +62,14 @@ pub async fn load_track_fast(
     }
 
     // ✅ ពិនិត្យ file size
-    let file_size = std::fs::metadata(path_obj)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let file_size = std::fs::metadata(path_obj).map(|m| m.len()).unwrap_or(0);
     println!("[Load] File size: {} bytes", file_size);
 
     if file_size < 1024 {
-        eprintln!("[Load] ❌ File too small ({} bytes) — not an audio file", file_size);
+        eprintln!(
+            "[Load] ❌ File too small ({} bytes) — not an audio file",
+            file_size
+        );
         return Err(format!("File too small: {} bytes", file_size));
     }
 
@@ -83,7 +84,7 @@ pub async fn load_track_fast(
         decoded.duration_secs,
         decoded.sample_rate
     );
-    
+
     let path_clone = path.clone();
     let decoded = tokio::task::spawn_blocking(move || decode_samples_only(&path_clone))
         .await
@@ -439,7 +440,7 @@ pub fn set_deck_fx_amount(
     Ok(())
 }
 
-// ✅ Enable/Disable FX
+// ✅ Set FX Active (Toggle)
 #[tauri::command]
 pub fn set_deck_fx_active(
     deck_id: String,
@@ -458,6 +459,102 @@ pub fn set_deck_fx_active(
             lock.fx_b.reset();
         }
     }
+    Ok(())
+}
+
+// ✅ Set Reverb Room
+#[tauri::command]
+pub fn set_reverb_room(
+    deck_id: String,
+    room: String,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let room_type = match room.as_str() {
+        "hall" => ReverbRoom::Hall,
+        "plate" => ReverbRoom::Plate,
+        "room" => ReverbRoom::Room,
+        "cathedral" => ReverbRoom::Cathedral,
+        "chamber" => ReverbRoom::Chamber,
+        _ => ReverbRoom::Hall,
+    };
+
+    if deck_id == "A" {
+        lock.fx_params_a.reverb_room = room_type;
+        lock.fx_params_a.reverb_damping = room_type.damping();
+    } else {
+        lock.fx_params_b.reverb_room = room_type;
+        lock.fx_params_b.reverb_damping = room_type.damping();
+    }
+    Ok(())
+}
+
+// ✅ Set FX Time (for Echo/Delay/Roll)
+#[tauri::command]
+pub fn set_fx_time(
+    deck_id: String,
+    fx_type: String,
+    beats: f32,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let params = if deck_id == "A" {
+        &mut lock.fx_params_a
+    } else {
+        &mut lock.fx_params_b
+    };
+
+    let division = TimeDivision::from_beats(beats);
+    let value = division.beats();
+
+    match fx_type.as_str() {
+        "echo" => params.echo_time_beats = value,
+        "delay" => params.delay_time_beats = value,
+        "roll" => params.roll_beats = value,
+        _ => {}
+    }
+
+    Ok(())
+}
+
+// ✅ Trigger Landing (Echo Out / Reverb Out / Delay Out / Roll Out)
+#[tauri::command]
+pub fn trigger_landing(
+    deck_id: String,
+    fx_type: String,
+    duration_secs: f32,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+
+    let fx = match fx_type.as_str() {
+        "echo" => FxType::Echo,
+        "reverb" => FxType::Reverb,
+        "delay" => FxType::Delay,
+        "roll" => FxType::Roll,
+        _ => return Err("Invalid FX".into()),
+    };
+
+    let duration = duration_secs.max(0.5);
+
+    if deck_id == "A" {
+        lock.fx_type_a = fx;
+        lock.fx_active_a = true;
+        lock.fx_amount_a = 1.0;
+        lock.deck_a.fx_out_active = true;
+        lock.deck_a.fx_out_progress = 0.0;
+        lock.deck_a.fx_out_duration = duration;
+        lock.deck_a.fx_out_volume = 1.0;
+    } else {
+        lock.fx_type_b = fx;
+        lock.fx_active_b = true;
+        lock.fx_amount_b = 1.0;
+        lock.deck_b.fx_out_active = true;
+        lock.deck_b.fx_out_progress = 0.0;
+        lock.deck_b.fx_out_duration = duration;
+        lock.deck_b.fx_out_volume = 1.0;
+    }
+
     Ok(())
 }
 
@@ -524,12 +621,13 @@ pub fn toggle_stem(
     Ok(())
 }
 
-// ✅ Echo Out / Reverb Out — Auto fade
+// ✅ Echo Out / Reverb Out / Delay Out / Roll Out — Auto fade
 #[tauri::command]
 pub fn trigger_fx_out(
     deck_id: String,
-    fx_type: String,    // "echo" or "reverb"
-    duration_secs: f32, // e.g. 2.0 seconds
+    fx_type: String,           // "echo", "reverb", "delay", "roll"
+    duration_secs: f32,        // e.g. 2.5 seconds
+    beats: Option<f32>,        // e.g. 0.25 beats for roll/delay
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<(), String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
@@ -537,30 +635,42 @@ pub fn trigger_fx_out(
     let fx = match fx_type.as_str() {
         "echo" => FxType::Echo,
         "reverb" => FxType::Reverb,
+        "delay" => FxType::Delay,
+        "roll" => FxType::Roll,
         _ => return Err("Invalid FX type".into()),
     };
+
+    let duration = duration_secs.max(0.5);
 
     if deck_id == "A" {
         lock.fx_type_a = fx;
         lock.fx_active_a = true;
-        lock.fx_amount_a = 0.0;
+        lock.fx_amount_a = 1.0;
+        if let Some(b) = beats {
+            lock.fx_params_a.roll_beats = b.clamp(0.0625, 4.0);
+            lock.fx_params_a.delay_time_beats = b.clamp(0.0625, 4.0);
+        }
         lock.deck_a.fx_out_active = true;
         lock.deck_a.fx_out_progress = 0.0;
-        lock.deck_a.fx_out_duration = duration_secs.max(0.5);
+        lock.deck_a.fx_out_duration = duration;
         lock.deck_a.fx_out_volume = 1.0;
     } else {
         lock.fx_type_b = fx;
         lock.fx_active_b = true;
-        lock.fx_amount_b = 0.0;
+        lock.fx_amount_b = 1.0;
+        if let Some(b) = beats {
+            lock.fx_params_b.roll_beats = b.clamp(0.0625, 4.0);
+            lock.fx_params_b.delay_time_beats = b.clamp(0.0625, 4.0);
+        }
         lock.deck_b.fx_out_active = true;
         lock.deck_b.fx_out_progress = 0.0;
-        lock.deck_b.fx_out_duration = duration_secs.max(0.5);
+        lock.deck_b.fx_out_duration = duration;
         lock.deck_b.fx_out_volume = 1.0;
     }
 
     println!(
         "[FX Out] Deck {} — {} for {:.1}s",
-        deck_id, fx_type, duration_secs
+        deck_id, fx_type, duration
     );
     Ok(())
 }
@@ -576,12 +686,12 @@ pub fn cancel_fx_out(
         lock.deck_a.fx_out_active = false;
         lock.deck_a.fx_out_volume = 1.0;
         lock.fx_active_a = false;
-        lock.fx_amount_a = 0.0;
+        lock.fx_a.reset();
     } else {
         lock.deck_b.fx_out_active = false;
         lock.deck_b.fx_out_volume = 1.0;
         lock.fx_active_b = false;
-        lock.fx_amount_b = 0.0;
+        lock.fx_b.reset();
     }
     Ok(())
 }
@@ -599,8 +709,8 @@ pub fn set_fx_params(
     reverb_decay: Option<f32>,
     reverb_damping: Option<f32>,
     reverb_mix: Option<f32>,
-    // Delay
-    delay_time_ms: Option<f32>,
+    // ✅ Delay — ប្រើ delay_time_beats (មិនមែន delay_time_ms)
+    delay_time_beats: Option<f32>,
     delay_feedback: Option<f32>,
     delay_mix: Option<f32>,
     // Flanger
@@ -623,6 +733,7 @@ pub fn set_fx_params(
         &mut lock.fx_params_b
     };
 
+    // ==================== ECHO ====================
     if let Some(v) = echo_time_beats {
         params.echo_time_beats = v.clamp(0.0625, 4.0);
     }
@@ -633,6 +744,7 @@ pub fn set_fx_params(
         params.echo_mix = v.clamp(0.0, 1.0);
     }
 
+    // ==================== REVERB ====================
     if let Some(v) = reverb_decay {
         params.reverb_decay = v.clamp(0.0, 1.0);
     }
@@ -643,8 +755,9 @@ pub fn set_fx_params(
         params.reverb_mix = v.clamp(0.0, 1.0);
     }
 
-    if let Some(v) = delay_time_ms {
-        params.delay_time_ms = v.clamp(10.0, 2000.0);
+    // ==================== DELAY ====================
+    if let Some(v) = delay_time_beats {
+        params.delay_time_beats = v.clamp(0.0625, 4.0);
     }
     if let Some(v) = delay_feedback {
         params.delay_feedback = v.clamp(0.0, 0.95);
@@ -653,6 +766,7 @@ pub fn set_fx_params(
         params.delay_mix = v.clamp(0.0, 1.0);
     }
 
+    // ==================== FLANGER ====================
     if let Some(v) = flanger_rate {
         params.flanger_rate = v.clamp(0.1, 5.0);
     }
@@ -663,6 +777,7 @@ pub fn set_fx_params(
         params.flanger_feedback = v.clamp(0.0, 0.9);
     }
 
+    // ==================== FILTER ====================
     if let Some(v) = filter_resonance {
         params.filter_resonance = v.clamp(0.1, 10.0);
     }
@@ -674,17 +789,21 @@ pub fn set_fx_params(
         };
     }
 
+    // ==================== ROLL ====================
     if let Some(v) = roll_beats {
         params.roll_beats = v.clamp(0.0625, 4.0);
     }
+
+    // ==================== BPM ====================
     if let Some(v) = bpm {
-        params.echo_bpm = v.clamp(60.0, 200.0);
-        params.roll_bpm = v.clamp(60.0, 200.0);
+        let clamped = v.clamp(60.0, 200.0);
+        params.echo_bpm = clamped;
+        params.delay_bpm = clamped;
+        params.roll_bpm = clamped;
     }
 
     Ok(())
 }
-
 #[tauri::command]
 pub fn get_fx_params(
     deck_id: String,
@@ -697,4 +816,38 @@ pub fn get_fx_params(
         lock.fx_params_b
     };
     Ok(params)
+}
+
+#[tauri::command]
+pub fn trigger_roll_out(
+    deck_id: String,
+    duration_secs: f32,
+    beats: f32,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let duration = duration_secs.max(0.5);
+
+    if deck_id == "A" {
+        lock.fx_type_a = FxType::Roll;
+        lock.fx_active_a = true;
+        lock.fx_amount_a = 1.0;
+        lock.fx_params_a.roll_beats = beats.clamp(0.0625, 4.0);
+        lock.deck_a.fx_out_active = true;
+        lock.deck_a.fx_out_progress = 0.0;
+        lock.deck_a.fx_out_duration = duration;
+        lock.deck_a.fx_out_volume = 1.0;
+    } else {
+        lock.fx_type_b = FxType::Roll;
+        lock.fx_active_b = true;
+        lock.fx_amount_b = 1.0;
+        lock.fx_params_b.roll_beats = beats.clamp(0.0625, 4.0);
+        lock.deck_b.fx_out_active = true;
+        lock.deck_b.fx_out_progress = 0.0;
+        lock.deck_b.fx_out_duration = duration;
+        lock.deck_b.fx_out_volume = 1.0;
+    }
+
+    println!("[Roll Out] Deck {} — duration {:.1}s, beats {:.2}", deck_id, duration, beats);
+    Ok(())
 }

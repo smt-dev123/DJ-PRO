@@ -1,8 +1,8 @@
-// ==================== FX TYPES ====================
-
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, PartialEq, Debug, Default)]
+// ==================== FX TYPE ====================
+
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
 pub enum FxType {
     #[default]
     None,
@@ -14,38 +14,145 @@ pub enum FxType {
     Roll,
 }
 
-// ==================== FX PARAMETERS ====================
+// ==================== REVERB ROOM TYPE ====================
+
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+pub enum ReverbRoom {
+    #[default]
+    Room, // Small room — decay 0.5s
+    Hall,      // Large hall — decay 2.5s
+    Plate,     // Plate reverb — decay 1.5s
+    Cathedral, // Very large — decay 5s
+    Chamber,   // Mid-size — decay 1.2s
+}
+
+impl ReverbRoom {
+    pub fn decay_secs(self) -> f32 {
+        match self {
+            ReverbRoom::Room => 0.5,
+            ReverbRoom::Hall => 2.5,
+            ReverbRoom::Plate => 1.5,
+            ReverbRoom::Cathedral => 5.0,
+            ReverbRoom::Chamber => 1.2,
+        }
+    }
+
+    pub fn damping(self) -> f32 {
+        match self {
+            ReverbRoom::Room => 0.7,      // Very damped
+            ReverbRoom::Hall => 0.4,      // Bright
+            ReverbRoom::Plate => 0.2,     // Very bright
+            ReverbRoom::Cathedral => 0.3, // Bright
+            ReverbRoom::Chamber => 0.5,   // Mid
+        }
+    }
+}
+
+// ==================== TIME DIVISION ====================
+
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub enum TimeDivision {
+    Div1_16, // 0.0625 beats
+    Div1_8,  // 0.125
+    Div1_4,  // 0.25
+    Div3_8,  // 0.375
+    Div1_2,  // 0.5
+    Div3_4,  // 0.75
+    Div1,    // 1.0
+    Div1_5,  // 1.5
+    Div2,    // 2.0
+    Div3,    // 3.0
+    Div4,    // 4.0
+}
+
+impl TimeDivision {
+    pub fn beats(self) -> f32 {
+        match self {
+            TimeDivision::Div1_16 => 0.0625,
+            TimeDivision::Div1_8 => 0.125,
+            TimeDivision::Div1_4 => 0.25,
+            TimeDivision::Div3_8 => 0.375,
+            TimeDivision::Div1_2 => 0.5,
+            TimeDivision::Div3_4 => 0.75,
+            TimeDivision::Div1 => 1.0,
+            TimeDivision::Div1_5 => 1.5,
+            TimeDivision::Div2 => 2.0,
+            TimeDivision::Div3 => 3.0,
+            TimeDivision::Div4 => 4.0,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TimeDivision::Div1_16 => "1/16",
+            TimeDivision::Div1_8 => "1/8",
+            TimeDivision::Div1_4 => "1/4",
+            TimeDivision::Div3_8 => "3/8",
+            TimeDivision::Div1_2 => "1/2",
+            TimeDivision::Div3_4 => "3/4",
+            TimeDivision::Div1 => "1",
+            TimeDivision::Div1_5 => "1½",
+            TimeDivision::Div2 => "2",
+            TimeDivision::Div3 => "3",
+            TimeDivision::Div4 => "4",
+        }
+    }
+
+    pub fn from_beats(beats: f32) -> Self {
+        match beats {
+            b if (b - 0.0625).abs() < 0.01 => TimeDivision::Div1_16,
+            b if (b - 0.125).abs() < 0.01 => TimeDivision::Div1_8,
+            b if (b - 0.25).abs() < 0.01 => TimeDivision::Div1_4,
+            b if (b - 0.375).abs() < 0.01 => TimeDivision::Div3_8,
+            b if (b - 0.5).abs() < 0.01 => TimeDivision::Div1_2,
+            b if (b - 0.75).abs() < 0.01 => TimeDivision::Div3_4,
+            b if (b - 1.0).abs() < 0.01 => TimeDivision::Div1,
+            b if (b - 1.5).abs() < 0.01 => TimeDivision::Div1_5,
+            b if (b - 2.0).abs() < 0.01 => TimeDivision::Div2,
+            b if (b - 3.0).abs() < 0.01 => TimeDivision::Div3,
+            _ => TimeDivision::Div4,
+        }
+    }
+}
+
+// ==================== FX PARAMS ====================
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct FxParams {
-    // ✅ Echo/Delay
-    pub echo_time_beats: f32,      // 0.25, 0.375, 0.5, 0.75, 1.0 (beats)
-    pub echo_feedback: f32,        // 0.0 - 0.95
-    pub echo_mix: f32,             // 0.0 - 1.0
-    pub echo_bpm: f32,             // សម្រាប់ convert beats → ms
+    // Echo
+    pub echo_time_beats: f32,
+    pub echo_feedback: f32,
+    pub echo_mix: f32,
+    pub echo_bpm: f32,
 
-    // ✅ Reverb
-    pub reverb_decay: f32,         // 0.0 - 1.0 (room size)
-    pub reverb_damping: f32,       // 0.0 - 1.0 (high-freq damping)
-    pub reverb_mix: f32,           // 0.0 - 1.0
+    // Reverb
+    pub reverb_room: ReverbRoom,
+    pub reverb_decay: f32,
+    pub reverb_damping: f32,
+    pub reverb_mix: f32,
 
-    // ✅ Delay
-    pub delay_time_ms: f32,        // 50 - 1000 ms
-    pub delay_feedback: f32,       // 0.0 - 0.95
-    pub delay_mix: f32,            // 0.0 - 1.0
+    // Delay
+    pub delay_time_beats: f32,
+    pub delay_feedback: f32,
+    pub delay_mix: f32,
+    pub delay_bpm: f32,
 
-    // ✅ Flanger
-    pub flanger_rate: f32,         // 0.1 - 5.0 Hz
-    pub flanger_depth: f32,        // 0.0 - 1.0
-    pub flanger_feedback: f32,     // 0.0 - 0.9
+    // Flanger
+    pub flanger_rate: f32,
+    pub flanger_depth: f32,
+    pub flanger_feedback: f32,
 
-    // ✅ Filter
-    pub filter_resonance: f32,     // 0.1 - 10.0 (Q)
-    pub filter_mode: FilterMode,   // LP / HP / BP
+    // Filter
+    pub filter_resonance: f32,
+    pub filter_mode: FilterMode,
 
-    // ✅ Roll
-    pub roll_beats: f32,           // 0.125, 0.25, 0.5, 1.0 (beats)
+    // Roll
+    pub roll_beats: f32,
     pub roll_bpm: f32,
+
+    // Landing
+    pub landing_enabled: bool,
+    pub landing_duration: f32, // seconds
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
@@ -59,18 +166,20 @@ pub enum FilterMode {
 impl Default for FxParams {
     fn default() -> Self {
         Self {
-            echo_time_beats: 0.375,   // 3/8 beat
+            echo_time_beats: 0.5,
             echo_feedback: 0.6,
             echo_mix: 0.8,
             echo_bpm: 128.0,
 
+            reverb_room: ReverbRoom::Hall,
             reverb_decay: 0.7,
             reverb_damping: 0.5,
             reverb_mix: 0.7,
 
-            delay_time_ms: 100.0,
+            delay_time_beats: 0.25,
             delay_feedback: 0.3,
             delay_mix: 0.5,
+            delay_bpm: 128.0,
 
             flanger_rate: 0.5,
             flanger_depth: 0.7,
@@ -81,28 +190,184 @@ impl Default for FxParams {
 
             roll_beats: 0.25,
             roll_bpm: 128.0,
+
+            landing_enabled: true,
+            landing_duration: 2.5,
         }
     }
 }
 
 impl FxParams {
-    /// ✅ Convert beats → samples សម្រាប់ Echo
     pub fn echo_delay_samples(&self, sample_rate: f32) -> usize {
         let secs_per_beat = 60.0 / self.echo_bpm;
         let delay_secs = self.echo_time_beats * secs_per_beat;
         (delay_secs * sample_rate) as usize
     }
 
-    /// ✅ Convert ms → samples សម្រាប់ Delay
     pub fn delay_time_samples(&self, sample_rate: f32) -> usize {
-        (self.delay_time_ms / 1000.0 * sample_rate) as usize
+        let secs_per_beat = 60.0 / self.delay_bpm;
+        let delay_secs = self.delay_time_beats * secs_per_beat;
+        (delay_secs * sample_rate) as usize
     }
 
-    /// ✅ Convert beats → samples សម្រាប់ Roll
     pub fn roll_length_samples(&self, sample_rate: f32) -> usize {
         let secs_per_beat = 60.0 / self.roll_bpm;
         let roll_secs = self.roll_beats * secs_per_beat;
         (roll_secs * sample_rate) as usize
+    }
+
+    pub fn reverb_decay_samples(&self, sample_rate: f32) -> usize {
+        let decay = self.reverb_room.decay_secs() * self.reverb_decay.max(0.1);
+        (decay * sample_rate) as usize
+    }
+}
+
+// ==================== SCHROEDER / FREEVERB DSP COMPONENTS ====================
+
+#[derive(Clone, Default)]
+pub struct CombFilter {
+    buffer: Vec<f32>,
+    buf_size: usize,
+    buf_idx: usize,
+    filter_store: f32,
+}
+
+impl CombFilter {
+    pub fn new(size: usize) -> Self {
+        Self {
+            buffer: vec![0.0; size],
+            buf_size: size,
+            buf_idx: 0,
+            filter_store: 0.0,
+        }
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, input: f32, feedback: f32, damp: f32) -> f32 {
+        if self.buf_size == 0 {
+            return input;
+        }
+        let output = self.buffer[self.buf_idx];
+
+        // Lowpass damping in feedback loop
+        self.filter_store = output * (1.0 - damp) + self.filter_store * damp;
+        if self.filter_store.abs() < 1e-15 {
+            self.filter_store = 0.0; // Denormal suppression
+        }
+
+        self.buffer[self.buf_idx] = input + self.filter_store * feedback;
+
+        self.buf_idx += 1;
+        if self.buf_idx >= self.buf_size {
+            self.buf_idx = 0;
+        }
+        output
+    }
+
+    pub fn reset(&mut self) {
+        self.buffer.fill(0.0);
+        self.filter_store = 0.0;
+        self.buf_idx = 0;
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct AllpassFilter {
+    buffer: Vec<f32>,
+    buf_size: usize,
+    buf_idx: usize,
+    feedback: f32,
+}
+
+impl AllpassFilter {
+    pub fn new(size: usize) -> Self {
+        Self {
+            buffer: vec![0.0; size],
+            buf_size: size,
+            buf_idx: 0,
+            feedback: 0.5,
+        }
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, input: f32) -> f32 {
+        if self.buf_size == 0 {
+            return input;
+        }
+        let buf_out = self.buffer[self.buf_idx];
+        let output = -input + buf_out;
+        self.buffer[self.buf_idx] = input + buf_out * self.feedback;
+
+        self.buf_idx += 1;
+        if self.buf_idx >= self.buf_size {
+            self.buf_idx = 0;
+        }
+        output
+    }
+
+    pub fn reset(&mut self) {
+        self.buffer.fill(0.0);
+        self.buf_idx = 0;
+    }
+}
+
+const COMB_TUNINGS_L: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+const ALLPASS_TUNINGS_L: [usize; 4] = [556, 441, 341, 225];
+const STEREO_SPREAD: usize = 23;
+
+#[derive(Clone, Default)]
+pub struct FreeverbChannel {
+    pub combs: Vec<CombFilter>,
+    pub allpasses: Vec<AllpassFilter>,
+    pub sample_rate: f32,
+}
+
+impl FreeverbChannel {
+    pub fn init(&mut self, is_right: bool, sample_rate: f32) {
+        if (self.sample_rate - sample_rate).abs() < 1.0 && !self.combs.is_empty() {
+            return;
+        }
+        self.sample_rate = sample_rate;
+        let scale = (sample_rate / 44100.0).max(0.5);
+        let offset = if is_right { STEREO_SPREAD } else { 0 };
+
+        self.combs = COMB_TUNINGS_L
+            .iter()
+            .map(|&d| {
+                let size = (((d + offset) as f32 * scale).round() as usize).max(16);
+                CombFilter::new(size)
+            })
+            .collect();
+
+        self.allpasses = ALLPASS_TUNINGS_L
+            .iter()
+            .map(|&d| {
+                let size = (((d + offset) as f32 * scale).round() as usize).max(16);
+                AllpassFilter::new(size)
+            })
+            .collect();
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, input: f32, feedback: f32, damp: f32) -> f32 {
+        let input_scaled = input * 0.015;
+        let mut out = 0.0;
+        for comb in &mut self.combs {
+            out += comb.process(input_scaled, feedback, damp);
+        }
+        for allpass in &mut self.allpasses {
+            out = allpass.process(out);
+        }
+        out
+    }
+
+    pub fn reset(&mut self) {
+        for comb in &mut self.combs {
+            comb.reset();
+        }
+        for allpass in &mut self.allpasses {
+            allpass.reset();
+        }
     }
 }
 
@@ -115,15 +380,15 @@ pub struct FxState {
     pub fx_active: bool,
     pub params: FxParams,
 
-    // Echo / Delay
+    // Echo / Delay / Flanger buffers
     pub delay_buffer_l: Vec<f32>,
     pub delay_buffer_r: Vec<f32>,
     pub delay_write_pos: usize,
     pub delay_length_samples: usize,
 
-    // Reverb
-    pub reverb_buffer: Vec<f32>,
-    pub reverb_write_pos: usize,
+    // Reverb Engine (Freeverb / Schroeder multi-comb & allpass diffusion)
+    pub reverb_l: FreeverbChannel,
+    pub reverb_r: FreeverbChannel,
 
     // Flanger
     pub flanger_phase: f32,
@@ -141,59 +406,39 @@ pub struct FxState {
 }
 
 impl FxState {
-    pub fn new(sample_rate: u32) -> Self {
-        let sr = sample_rate as usize;
-        Self {
-            fx_type: FxType::None,
-            fx_amount: 0.0,
-            fx_active: false,
-            params: FxParams::default(),
-
-            delay_buffer_l: vec![0.0; sr],
-            delay_buffer_r: vec![0.0; sr],
-            delay_write_pos: 0,
-            delay_length_samples: sr,
-
-            reverb_buffer: vec![0.0; sr / 2],
-            reverb_write_pos: 0,
-
-            flanger_phase: 0.0,
-            filter_state_l: 0.0,
-            filter_state_r: 0.0,
-
-            roll_buffer_l: vec![0.0; sr / 8],
-            roll_buffer_r: vec![0.0; sr / 8],
-            roll_write_pos: 0,
-            roll_length_samples: sr / 8,
-            roll_read_pos: 0,
-        }
-    }
-
     pub fn reset(&mut self) {
         self.delay_buffer_l.fill(0.0);
         self.delay_buffer_r.fill(0.0);
-        self.reverb_buffer.fill(0.0);
         self.roll_buffer_l.fill(0.0);
         self.roll_buffer_r.fill(0.0);
         self.delay_write_pos = 0;
-        self.reverb_write_pos = 0;
         self.roll_write_pos = 0;
         self.roll_read_pos = 0;
         self.flanger_phase = 0.0;
         self.filter_state_l = 0.0;
         self.filter_state_r = 0.0;
+        self.reverb_l.reset();
+        self.reverb_r.reset();
     }
 
-    /// ✅ Resize roll buffer បើ roll_beats ផ្លាស់ប្តូរ
-    pub fn resize_roll_buffer(&mut self, sample_rate: f32) {
-        let new_len = self.params.roll_length_samples(sample_rate).max(64);
-        if self.roll_buffer_l.len() != new_len {
-            self.roll_buffer_l = vec![0.0; new_len];
-            self.roll_buffer_r = vec![0.0; new_len];
-            self.roll_length_samples = new_len;
-            self.roll_write_pos = 0;
-            self.roll_read_pos = 0;
+    fn ensure_buffers(&mut self, sample_rate: f32) {
+        let sr = sample_rate as usize;
+        let max_delay = sr * 4;
+
+        if self.delay_buffer_l.len() < max_delay {
+            self.delay_buffer_l.resize(max_delay, 0.0);
+            self.delay_buffer_r.resize(max_delay, 0.0);
         }
+        if self.roll_buffer_l.len() < sr {
+            self.roll_buffer_l.resize(sr, 0.0);
+            self.roll_buffer_r.resize(sr, 0.0);
+        }
+
+        self.delay_length_samples = max_delay;
+        self.roll_length_samples = self.params.roll_length_samples(sample_rate).max(64);
+
+        self.reverb_l.init(false, sample_rate);
+        self.reverb_r.init(true, sample_rate);
     }
 }
 
@@ -204,14 +449,7 @@ pub fn apply_fx(fx: &mut FxState, x: f32, channel: usize, sample_rate: f32) -> f
         return x;
     }
 
-    // Lazy init
-    if fx.delay_buffer_l.is_empty() {
-        let sr = sample_rate as usize;
-        fx.delay_buffer_l = vec![0.0; sr];
-        fx.delay_buffer_r = vec![0.0; sr];
-        fx.delay_length_samples = sr;
-        fx.reverb_buffer = vec![0.0; sr / 2];
-    }
+    fx.ensure_buffers(sample_rate);
 
     let amount = fx.fx_amount.clamp(0.0, 1.0);
     let params = fx.params;
@@ -223,13 +461,11 @@ pub fn apply_fx(fx: &mut FxState, x: f32, channel: usize, sample_rate: f32) -> f
         FxType::Echo => {
             let delay_samples = params
                 .echo_delay_samples(sample_rate)
-                .min(fx.delay_length_samples - 1);
+                .min(fx.delay_length_samples - 1)
+                .max(1);
 
-            let read_pos = if fx.delay_write_pos >= delay_samples {
-                fx.delay_write_pos - delay_samples
-            } else {
-                fx.delay_length_samples + fx.delay_write_pos - delay_samples
-            };
+            let read_pos = (fx.delay_write_pos + fx.delay_length_samples - delay_samples)
+                % fx.delay_length_samples;
 
             let buf = if channel == 0 {
                 &mut fx.delay_buffer_l
@@ -249,52 +485,46 @@ pub fn apply_fx(fx: &mut FxState, x: f32, channel: usize, sample_rate: f32) -> f
             x * (1.0 - mix) + delayed * mix
         }
 
-        // ==================== REVERB ====================
+        // ==================== REVERB (True Algorithmic Schroeder/Freeverb Reverb) ====================
         FxType::Reverb => {
-            let buf_len = fx.reverb_buffer.len();
-            if buf_len == 0 {
-                return x;
-            }
+            // Room acoustic parameters: (feedback / room decay, high-frequency damping)
+            let (base_feedback, base_damp) = match params.reverb_room {
+                ReverbRoom::Room => (0.72, 0.45),
+                ReverbRoom::Chamber => (0.78, 0.35),
+                ReverbRoom::Plate => (0.84, 0.12),
+                ReverbRoom::Hall => (0.89, 0.25),
+                ReverbRoom::Cathedral => (0.94, 0.18),
+            };
 
-            // ✅ Decay ប៉ះពាល់ feedback
-            let feedback = 0.3 + params.reverb_decay * 0.65;
+            let decay_adj = (params.reverb_decay.clamp(0.0, 1.0) - 0.7) * 0.15;
+            let fb = (base_feedback + decay_adj).clamp(0.55, 0.97);
 
-            // ✅ Damping ប៉ះពាល់ low-pass ក្នុង feedback
-            let damping = params.reverb_damping.clamp(0.0, 1.0);
+            let damp_adj = params.reverb_damping.clamp(0.05, 1.0) / 0.5;
+            let dm = (base_damp * damp_adj).clamp(0.02, 0.75);
 
-            // Multi-tap delay for simple reverb
-            let tap1 = (buf_len / 4) % buf_len;
-            let tap2 = (buf_len / 3) % buf_len;
-            let tap3 = (buf_len / 2) % buf_len;
+            let wet_sample = if channel == 0 {
+                fx.reverb_l.process(x, fb, dm)
+            } else {
+                fx.reverb_r.process(x, fb, dm)
+            };
 
-            let read1 = (fx.reverb_write_pos + buf_len - tap1) % buf_len;
-            let read2 = (fx.reverb_write_pos + buf_len - tap2) % buf_len;
-            let read3 = (fx.reverb_write_pos + buf_len - tap3) % buf_len;
+            let wet_mix = params.reverb_mix * amount;
+            // Maintain crisp, clear dry audio punch without attenuation, while adding lush ambient reverb tail
+            let dry_gain = (1.0 - wet_mix * 0.15).max(0.0);
+            let wet_gain = wet_mix * 1.5;
 
-            let delayed = (fx.reverb_buffer[read1] + fx.reverb_buffer[read2] * 0.7
-                + fx.reverb_buffer[read3] * 0.5)
-                / 2.2;
-
-            // ✅ Apply damping (simple low-pass)
-            let damped = delayed * (1.0 - damping * 0.5);
-            fx.reverb_buffer[fx.reverb_write_pos] = x + damped * feedback;
-            fx.reverb_write_pos = (fx.reverb_write_pos + 1) % buf_len;
-
-            let mix = params.reverb_mix * amount;
-            x * (1.0 - mix) + delayed * mix
+            x * dry_gain + wet_sample * wet_gain
         }
 
         // ==================== DELAY ====================
         FxType::Delay => {
             let delay_samples = params
                 .delay_time_samples(sample_rate)
-                .min(fx.delay_length_samples - 1);
+                .min(fx.delay_length_samples - 1)
+                .max(1);
 
-            let read_pos = if fx.delay_write_pos >= delay_samples {
-                fx.delay_write_pos - delay_samples
-            } else {
-                fx.delay_length_samples + fx.delay_write_pos - delay_samples
-            };
+            let read_pos = (fx.delay_write_pos + fx.delay_length_samples - delay_samples)
+                % fx.delay_length_samples;
 
             let buf = if channel == 0 {
                 &mut fx.delay_buffer_l
@@ -329,11 +559,8 @@ pub fn apply_fx(fx: &mut FxState, x: f32, channel: usize, sample_rate: f32) -> f
                 .min(fx.delay_length_samples - 1)
                 .max(1);
 
-            let read_pos = if fx.delay_write_pos >= delay_samples {
-                fx.delay_write_pos - delay_samples
-            } else {
-                fx.delay_length_samples + fx.delay_write_pos - delay_samples
-            };
+            let read_pos = (fx.delay_write_pos + fx.delay_length_samples - delay_samples)
+                % fx.delay_length_samples;
 
             let buf = if channel == 0 {
                 &mut fx.delay_buffer_l
@@ -356,6 +583,7 @@ pub fn apply_fx(fx: &mut FxState, x: f32, channel: usize, sample_rate: f32) -> f
         FxType::Filter => {
             let resonance = params.filter_resonance.clamp(0.1, 10.0);
             let alpha = (0.1 + amount * 0.85) / resonance;
+
             let state = if channel == 0 {
                 &mut fx.filter_state_l
             } else {
@@ -373,7 +601,14 @@ pub fn apply_fx(fx: &mut FxState, x: f32, channel: usize, sample_rate: f32) -> f
 
         // ==================== ROLL ====================
         FxType::Roll => {
-            fx.resize_roll_buffer(sample_rate);
+            let roll_len = fx.params.roll_length_samples(sample_rate).max(64);
+            if fx.roll_buffer_l.len() != roll_len {
+                fx.roll_buffer_l.resize(roll_len, 0.0);
+                fx.roll_buffer_r.resize(roll_len, 0.0);
+                fx.roll_length_samples = roll_len;
+                fx.roll_write_pos = 0;
+                fx.roll_read_pos = 0;
+            }
 
             let buf = if channel == 0 {
                 &mut fx.roll_buffer_l
@@ -381,18 +616,22 @@ pub fn apply_fx(fx: &mut FxState, x: f32, channel: usize, sample_rate: f32) -> f
                 &mut fx.roll_buffer_r
             };
 
-            if buf.is_empty() {
-                return x;
+            if amount < 0.2 {
+                // Continuously capture audio stream into circular buffer
+                buf[fx.roll_write_pos] = x;
+                if channel == 0 {
+                    fx.roll_write_pos = (fx.roll_write_pos + 1) % fx.roll_length_samples;
+                    fx.roll_read_pos = fx.roll_write_pos;
+                }
+                x
+            } else {
+                // Loop active: loop captured slice and crossfade
+                let looped = buf[fx.roll_read_pos];
+                if channel == 0 {
+                    fx.roll_read_pos = (fx.roll_read_pos + 1) % fx.roll_length_samples;
+                }
+                x * (1.0 - amount) + looped * amount
             }
-
-            buf[fx.roll_write_pos] = x;
-
-            if channel == 0 {
-                fx.roll_write_pos = (fx.roll_write_pos + 1) % fx.roll_length_samples;
-                fx.roll_read_pos = (fx.roll_read_pos + 1) % fx.roll_length_samples;
-            }
-
-            buf[fx.roll_read_pos]
         }
     }
 }

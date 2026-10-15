@@ -2,7 +2,13 @@ import { reactive, ref, watch, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { DeckId, DeckState, LibraryTrack, WaveformPeak, FxParams } from "../types/dj";
+import type {
+  DeckId,
+  DeckState,
+  LibraryTrack,
+  WaveformPeak,
+  FxParams,
+} from "../types/dj";
 import { usePlaylistStorage } from "./usePlaylistStorage";
 import { useCueStorage } from "./useCueStorage";
 import { useSettingsStorage } from "./useSettingsStorage";
@@ -32,21 +38,40 @@ interface TrackReadyPayload {
 
 // ==================== DEFAULT VALUES ====================
 const defaultFxParams: FxParams = {
-  echo_time_beats: 0.375,
+  // ==================== ECHO ====================
+  echo_time_beats: 0.5,
   echo_feedback: 0.6,
   echo_mix: 0.8,
+  echo_bpm: 128.0,
+
+  // ==================== REVERB ====================
+  reverb_room: "hall",
   reverb_decay: 0.7,
   reverb_damping: 0.5,
   reverb_mix: 0.7,
-  delay_time_ms: 100,
+
+  // ==================== DELAY ====================
+  delay_time_beats: 0.25,
   delay_feedback: 0.3,
   delay_mix: 0.5,
+  delay_bpm: 128.0,
+
+  // ==================== FLANGER ====================
   flanger_rate: 0.5,
   flanger_depth: 0.7,
   flanger_feedback: 0.5,
+
+  // ==================== FILTER ====================
   filter_resonance: 0.7,
   filter_mode: "lowpass",
+
+  // ==================== ROLL ====================
   roll_beats: 0.25,
+  roll_bpm: 128.0,
+
+  // ==================== LANDING ====================
+  landing_enabled: true,
+  landing_duration: 2.5,
 };
 
 // ==================== COMPOSABLE ====================
@@ -77,7 +102,7 @@ export function useDjEngine() {
     waveform: [],
     durationSecs: 0,
     fxType: "none",
-    fxAmount: 0,
+    fxAmount: 0.8,
     fxActive: false,
     fxParams: { ...defaultFxParams },
     activeLoop: null,
@@ -110,7 +135,7 @@ export function useDjEngine() {
     waveform: [],
     durationSecs: 0,
     fxType: "none",
-    fxAmount: 0,
+    fxAmount: 0.8,
     fxActive: false,
     fxParams: { ...defaultFxParams },
     activeLoop: null,
@@ -135,16 +160,21 @@ export function useDjEngine() {
   let saveTimer: number | null = null;
 
   async function setupListeners() {
-    unlistenChunk = await listen<WaveformChunkPayload>("waveform-chunk", (event) => {
-      const { deckId, chunk } = event.payload;
-      const deck = deckId === "A" ? deckA : deckB;
-      deck.waveform = [...deck.waveform, ...chunk];
-    });
+    unlistenChunk = await listen<WaveformChunkPayload>(
+      "waveform-chunk",
+      (event) => {
+        const { deckId, chunk } = event.payload;
+        const deck = deckId === "A" ? deckA : deckB;
+        deck.waveform = [...deck.waveform, ...chunk];
+      },
+    );
 
     unlistenComplete = await listen<any>("waveform-complete", (event) => {
       const { deckId } = event.payload;
       const deck = deckId === "A" ? deckA : deckB;
-      console.log(`[Waveform] Deck ${deckId}: ✅ COMPLETE (${deck.waveform.length} peaks)`);
+      console.log(
+        `[Waveform] Deck ${deckId}: ✅ COMPLETE (${deck.waveform.length} peaks)`,
+      );
     });
 
     unlistenReady = await listen<TrackReadyPayload>("track-ready", (event) => {
@@ -167,6 +197,11 @@ export function useDjEngine() {
           if (res) {
             deckA.progress = res.progress;
             deckA.currentTime = res.current_time_str;
+            if (res.is_playing !== undefined && !res.is_playing) {
+              deckA.isPlaying = false;
+              if (deckA.status === "PLAYING") deckA.status = "READY";
+              deckA.fxActive = false;
+            }
           }
         })
         .catch(() => {});
@@ -177,6 +212,11 @@ export function useDjEngine() {
           if (res) {
             deckB.progress = res.progress;
             deckB.currentTime = res.current_time_str;
+            if (res.is_playing !== undefined && !res.is_playing) {
+              deckB.isPlaying = false;
+              if (deckB.status === "PLAYING") deckB.status = "READY";
+              deckB.fxActive = false;
+            }
           }
         })
         .catch(() => {});
@@ -188,7 +228,12 @@ export function useDjEngine() {
     if (isDecoding.value[deckId]) return;
     const selected = await open({
       multiple: false,
-      filters: [{ name: "Audio Files", extensions: ["mp3", "wav", "aac", "m4a", "flac", "ogg"] }],
+      filters: [
+        {
+          name: "Audio Files",
+          extensions: ["mp3", "wav", "aac", "m4a", "flac", "ogg"],
+        },
+      ],
     });
     if (selected && typeof selected === "string") {
       await loadFileToDeck(deckId, selected);
@@ -213,7 +258,10 @@ export function useDjEngine() {
     deck.waveform = [];
 
     try {
-      await invoke<TrackLoadedFast>("load_track_fast", { deckId, path: track.path });
+      await invoke<TrackLoadedFast>("load_track_fast", {
+        deckId,
+        path: track.path,
+      });
 
       // ✅ Auto-detect drive & load playlists/cues
       if (!playlist.activeDrive.value) {
@@ -237,7 +285,11 @@ export function useDjEngine() {
 
     const deck = deckId === "A" ? deckA : deckB;
     deck.status = "LOADING...";
-    const fileName = filePath.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, "") || "Track";
+    const fileName =
+      filePath
+        .split(/[\\/]/)
+        .pop()
+        ?.replace(/\.[^/.]+$/, "") || "Track";
     deck.title = fileName;
     deck.artist = "Local File";
     deck.isPlaying = false;
@@ -246,7 +298,10 @@ export function useDjEngine() {
     deck.waveform = [];
 
     try {
-      await invoke<TrackLoadedFast>("load_track_fast", { deckId, path: filePath });
+      await invoke<TrackLoadedFast>("load_track_fast", {
+        deckId,
+        path: filePath,
+      });
 
       // ✅ Auto-detect drive & load playlists/cues
       if (!playlist.activeDrive.value) {
@@ -279,7 +334,9 @@ export function useDjEngine() {
     deckA.gain = s.deck_a.gain;
     deckA.keyLock = s.deck_a.key_lock;
     deckA.fxType = s.deck_a.fx_type as any;
-    deckA.fxAmount = s.deck_a.fx_amount;
+    if (s.deck_a.fx_amount !== undefined && s.deck_a.fx_amount > 0) {
+      deckA.fxAmount = s.deck_a.fx_amount;
+    }
     if (s.deck_a.fx_params && Object.keys(s.deck_a.fx_params).length > 0) {
       deckA.fxParams = { ...deckA.fxParams, ...s.deck_a.fx_params };
     }
@@ -293,7 +350,9 @@ export function useDjEngine() {
     deckB.gain = s.deck_b.gain;
     deckB.keyLock = s.deck_b.key_lock;
     deckB.fxType = s.deck_b.fx_type as any;
-    deckB.fxAmount = s.deck_b.fx_amount;
+    if (s.deck_b.fx_amount !== undefined && s.deck_b.fx_amount > 0) {
+      deckB.fxAmount = s.deck_b.fx_amount;
+    }
     if (s.deck_b.fx_params && Object.keys(s.deck_b.fx_params).length > 0) {
       deckB.fxParams = { ...deckB.fxParams, ...s.deck_b.fx_params };
     }
@@ -329,7 +388,6 @@ export function useDjEngine() {
         reverbDecay: deck.fxParams.reverb_decay,
         reverbDamping: deck.fxParams.reverb_damping,
         reverbMix: deck.fxParams.reverb_mix,
-        delayTimeMs: deck.fxParams.delay_time_ms,
         delayFeedback: deck.fxParams.delay_feedback,
         delayMix: deck.fxParams.delay_mix,
         flangerRate: deck.fxParams.flanger_rate,
@@ -450,7 +508,7 @@ export function useDjEngine() {
     high: number,
     mid: number,
     low: number,
-    filter: number
+    filter: number,
   ) {
     const deck = deckId === "A" ? deckA : deckB;
     deck.eqHigh = high;
@@ -480,6 +538,7 @@ export function useDjEngine() {
     deck.fxType = fxType as any;
     try {
       await invoke("set_deck_fx_type", { deckId, fxType });
+      await invoke("set_deck_fx_amount", { deckId, amount: deck.fxAmount });
     } catch (err) {
       console.error(`[FX ${deckId}] Error:`, err);
     }
@@ -488,6 +547,7 @@ export function useDjEngine() {
   async function setDeckFxAmount(deckId: DeckId, amount: number) {
     const deck = deckId === "A" ? deckA : deckB;
     deck.fxAmount = Math.max(0, Math.min(1, amount));
+    saveFxAmountToStorage(deckId);
     try {
       await invoke("set_deck_fx_amount", { deckId, amount: deck.fxAmount });
     } catch {}
@@ -497,22 +557,99 @@ export function useDjEngine() {
     const deck = deckId === "A" ? deckA : deckB;
     deck.fxActive = active;
     try {
+      if (active) {
+        // Guarantee backend has the exact active fxAmount
+        await invoke("set_deck_fx_amount", { deckId, amount: deck.fxAmount });
+      }
       await invoke("set_deck_fx_active", { deckId, active });
     } catch {}
   }
 
   async function resetDeckFx(deckId: DeckId) {
     const deck = deckId === "A" ? deckA : deckB;
-    deck.fxAmount = 0;
     deck.fxActive = false;
     try {
       await invoke("reset_deck_fx", { deckId });
     } catch {}
   }
 
+  // ==================== AUTO-SAVE FX & LANDING SETTINGS ====================
+  const STORAGE_KEY_FX_A = "djpro_fx_params_A";
+  const STORAGE_KEY_FX_B = "djpro_fx_params_B";
+  const STORAGE_KEY_AMT_A = "djpro_fx_amount_A";
+  const STORAGE_KEY_AMT_B = "djpro_fx_amount_B";
+  const STORAGE_KEY_LANDING_A = "djpro_landing_settings_A";
+  const STORAGE_KEY_LANDING_B = "djpro_landing_settings_B";
+
+  function loadSavedFxSettings() {
+    try {
+      const savedFxA = localStorage.getItem(STORAGE_KEY_FX_A);
+      if (savedFxA) {
+        Object.assign(deckA.fxParams, JSON.parse(savedFxA));
+      }
+      const savedFxB = localStorage.getItem(STORAGE_KEY_FX_B);
+      if (savedFxB) {
+        Object.assign(deckB.fxParams, JSON.parse(savedFxB));
+      }
+      const savedAmtA = localStorage.getItem(STORAGE_KEY_AMT_A);
+      if (savedAmtA !== null) {
+        deckA.fxAmount = parseFloat(savedAmtA);
+      }
+      const savedAmtB = localStorage.getItem(STORAGE_KEY_AMT_B);
+      if (savedAmtB !== null) {
+        deckB.fxAmount = parseFloat(savedAmtB);
+      }
+      const savedLandA = localStorage.getItem(STORAGE_KEY_LANDING_A);
+      if (savedLandA) {
+        landingSettingsA.value = { ...defaultLandingSettings, ...JSON.parse(savedLandA) };
+      }
+      const savedLandB = localStorage.getItem(STORAGE_KEY_LANDING_B);
+      if (savedLandB) {
+        landingSettingsB.value = { ...defaultLandingSettings, ...JSON.parse(savedLandB) };
+      }
+      console.log("[Auto-Save] Loaded FX, AMT & Landing settings from localStorage");
+    } catch (e) {
+      console.warn("[Auto-Save] Could not load from localStorage:", e);
+    }
+  }
+
+  function saveFxAmountToStorage(deckId: DeckId) {
+    try {
+      const key = deckId === "A" ? STORAGE_KEY_AMT_A : STORAGE_KEY_AMT_B;
+      const val = deckId === "A" ? deckA.fxAmount : deckB.fxAmount;
+      localStorage.setItem(key, val.toString());
+      console.log(`[Auto-Save] Saved AMT ${deckId}: ${val}`);
+    } catch (e) {
+      console.warn(`[Auto-Save] Error saving AMT ${deckId}:`, e);
+    }
+  }
+
+  function saveFxParamsToStorage(deckId: DeckId) {
+    try {
+      const key = deckId === "A" ? STORAGE_KEY_FX_A : STORAGE_KEY_FX_B;
+      const val = deckId === "A" ? deckA.fxParams : deckB.fxParams;
+      localStorage.setItem(key, JSON.stringify(val));
+    } catch (e) {
+      console.warn(`[Auto-Save] Error saving FX Params ${deckId}:`, e);
+    }
+  }
+
+  function saveLandingSettingsToStorage(deckId: DeckId) {
+    try {
+      const key = deckId === "A" ? STORAGE_KEY_LANDING_A : STORAGE_KEY_LANDING_B;
+      const val = deckId === "A" ? landingSettingsA.value : landingSettingsB.value;
+      localStorage.setItem(key, JSON.stringify(val));
+    } catch (e) {
+      console.warn(`[Auto-Save] Error saving Landing Settings ${deckId}:`, e);
+    }
+  }
+
   async function updateFxParams(deckId: DeckId, params: Partial<FxParams>) {
     const deck = deckId === "A" ? deckA : deckB;
     deck.fxParams = { ...deck.fxParams, ...params };
+
+    // ✅ Auto-save immediately to localStorage
+    saveFxParamsToStorage(deckId);
 
     const p = deck.fxParams;
     try {
@@ -524,7 +661,7 @@ export function useDjEngine() {
         reverbDecay: p.reverb_decay,
         reverbDamping: p.reverb_damping,
         reverbMix: p.reverb_mix,
-        delayTimeMs: p.delay_time_ms,
+        delayTimeBeats: p.delay_time_beats,
         delayFeedback: p.delay_feedback,
         delayMix: p.delay_mix,
         flangerRate: p.flanger_rate,
@@ -540,19 +677,39 @@ export function useDjEngine() {
     }
   }
 
+  // ==================== FX OUT / LANDING ====================
   async function triggerFxOut(
     deckId: DeckId,
-    fxType: "echo" | "reverb",
-    duration: number = 2.5
+    fxType: "echo" | "reverb" | "delay" | "roll",
+    duration?: number,
   ) {
     const deck = deckId === "A" ? deckA : deckB;
-    console.log(`[FX Out ${deckId}] ${fxType} for ${duration}s`);
+    const settings = deckId === "A" ? landingSettingsA.value : landingSettingsB.value;
+    const fxConfig = (settings as any)?.[fxType] || { duration: 2.5, amount: 1.0, beats: 0.25 };
+    const dur = duration ?? fxConfig.duration ?? 2.5;
+    const beats = fxConfig.beats ?? 0.25;
+
+    console.log(`[FX Out ${deckId}] ${fxType} for ${dur}s, beats: ${beats}`);
+
     deck.fxType = fxType;
     deck.fxActive = true;
-    deck.fxAmount = 0;
+    deck.fxAmount = 1.0;
 
     try {
-      await invoke("trigger_fx_out", { deckId, fxType, durationSecs: duration });
+      if (fxType === "roll") {
+        await invoke("trigger_roll_out", {
+          deckId,
+          durationSecs: dur,
+          beats: beats,
+        });
+      } else {
+        await invoke("trigger_fx_out", {
+          deckId,
+          fxType,
+          durationSecs: dur,
+          beats: beats,
+        });
+      }
     } catch (err) {
       console.error(`[FX Out ${deckId}] Error:`, err);
     }
@@ -561,10 +718,98 @@ export function useDjEngine() {
   async function cancelFxOut(deckId: DeckId) {
     const deck = deckId === "A" ? deckA : deckB;
     deck.fxActive = false;
-    deck.fxAmount = 0;
     try {
       await invoke("cancel_fx_out", { deckId });
     } catch {}
+  }
+
+  // ✅ Toggle FX (ON/OFF)
+  async function toggleFxActive(deckId: DeckId) {
+    const deck = deckId === "A" ? deckA : deckB;
+    const newActive = !deck.fxActive;
+    deck.fxActive = newActive;
+    try {
+      if (newActive) {
+        await invoke("set_deck_fx_amount", { deckId, amount: deck.fxAmount });
+      }
+      await invoke("set_deck_fx_active", { deckId, active: newActive });
+    } catch {}
+  }
+
+  // ✅ Set Reverb Room
+  async function setReverbRoom(deckId: DeckId, room: string) {
+    const deck = deckId === "A" ? deckA : deckB;
+    deck.fxParams.reverb_room = room as any;
+    saveFxParamsToStorage(deckId);
+    try {
+      await invoke("set_reverb_room", { deckId, room });
+    } catch {}
+  }
+
+  // ✅ Set FX Time (Echo/Delay/Roll)
+  async function setFxTime(deckId: DeckId, fxType: string, beats: number) {
+    const deck = deckId === "A" ? deckA : deckB;
+    if (fxType === "echo") deck.fxParams.echo_time_beats = beats;
+    else if (fxType === "delay") deck.fxParams.delay_time_beats = beats;
+    else if (fxType === "roll") deck.fxParams.roll_beats = beats;
+
+    saveFxParamsToStorage(deckId);
+    try {
+      await invoke("set_fx_time", { deckId, fxType, beats });
+    } catch {}
+  }
+
+  // ✅ Landing (Echo/Reverb Out)
+  async function triggerLanding(
+    deckId: DeckId,
+    fxType: "echo" | "reverb",
+    duration: number = 2.5,
+  ) {
+    const deck = deckId === "A" ? deckA : deckB;
+    deck.fxType = fxType;
+    deck.fxActive = true;
+    deck.fxAmount = 1.0;
+    try {
+      await invoke("trigger_landing", {
+        deckId,
+        fxType,
+        durationSecs: duration,
+      });
+    } catch {}
+  }
+
+  // ✅ Default landing settings
+  const defaultLandingSettings = {
+    echo: { duration: 2.5, amount: 1.0 },
+    reverb: { duration: 3.0, amount: 1.0 },
+    delay: { duration: 2.5, amount: 1.0 },
+    roll: { duration: 2.0, amount: 1.0, beats: 0.25 },
+  };
+
+  // ✅ Landing settings (per deck)
+  const landingSettingsA = ref({ ...defaultLandingSettings });
+  const landingSettingsB = ref({ ...defaultLandingSettings });
+
+  // ✅ Update landing settings with Auto-Save
+  function updateLandingSettings(
+    deckId: DeckId,
+    fxType: "echo" | "reverb" | "delay" | "roll",
+    settings: any,
+  ) {
+    if (deckId === "A") {
+      landingSettingsA.value = {
+        ...landingSettingsA.value,
+        [fxType]: settings,
+      };
+    } else {
+      landingSettingsB.value = {
+        ...landingSettingsB.value,
+        [fxType]: settings,
+      };
+    }
+    // ✅ Auto-save immediately to localStorage
+    saveLandingSettingsToStorage(deckId);
+    console.log(`[Landing ${deckId}] ${fxType} auto-saved:`, settings);
   }
 
   // ==================== HOT CUE ====================
@@ -637,19 +882,42 @@ export function useDjEngine() {
     () => [
       crossfader.value,
       masterVolume.value,
-      deckA.volume, deckA.eqHigh, deckA.eqMid, deckA.eqLow,
-      deckA.filter, deckA.gain, deckA.keyLock, deckA.fxType, deckA.fxParams,
-      deckB.volume, deckB.eqHigh, deckB.eqMid, deckB.eqLow,
-      deckB.filter, deckB.gain, deckB.keyLock, deckB.fxType, deckB.fxParams,
+      deckA.volume,
+      deckA.eqHigh,
+      deckA.eqMid,
+      deckA.eqLow,
+      deckA.filter,
+      deckA.gain,
+      deckA.keyLock,
+      deckA.fxType,
+      deckA.fxParams,
+      deckB.volume,
+      deckB.eqHigh,
+      deckB.eqMid,
+      deckB.eqLow,
+      deckB.filter,
+      deckB.gain,
+      deckB.keyLock,
+      deckB.fxType,
+      deckB.fxParams,
     ],
     scheduleSettingsSave,
-    { deep: true }
+    { deep: true },
   );
 
   // ==================== LIFECYCLE ====================
   onMounted(async () => {
     await setupListeners();
     tickerId = window.setInterval(updatePlaybackPositions, 200);
+
+    // ✅ Load Auto-Saved FX & Landing Settings from localStorage
+    loadSavedFxSettings();
+    try {
+      await updateFxParams("A", {});
+      await updateFxParams("B", {});
+      await invoke("set_deck_fx_amount", { deckId: "A", amount: deckA.fxAmount });
+      await invoke("set_deck_fx_amount", { deckId: "B", amount: deckB.fxAmount });
+    } catch {}
 
     // Try to load last drive settings
     try {
@@ -677,11 +945,14 @@ export function useDjEngine() {
   });
 
   // ✅ Save last drive
-  watch(() => playlist.activeDrive.value, (newDrive) => {
-    if (newDrive) {
-      localStorage.setItem("djpro_last_drive", newDrive);
-    }
-  });
+  watch(
+    () => playlist.activeDrive.value,
+    (newDrive) => {
+      if (newDrive) {
+        localStorage.setItem("djpro_last_drive", newDrive);
+      }
+    },
+  );
 
   // ==================== RETURN ====================
   return {
@@ -716,6 +987,13 @@ export function useDjEngine() {
     updateFxParams,
     triggerFxOut,
     cancelFxOut,
+    toggleFxActive,
+    setReverbRoom,
+    setFxTime,
+    triggerLanding,
+    landingSettingsA,
+    landingSettingsB,
+    updateLandingSettings,
 
     // Hot Cue / Loop / Stems
     triggerHotCue,

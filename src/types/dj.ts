@@ -10,21 +10,40 @@ export type WaveBand = WaveformPeak;
 
 // ==================== FX PARAMS ====================
 export interface FxParams {
+  // Echo
   echo_time_beats: number;
   echo_feedback: number;
   echo_mix: number;
+  echo_bpm: number;
+
+  // Reverb
+  reverb_room: "room" | "hall" | "plate" | "cathedral" | "chamber";
   reverb_decay: number;
   reverb_damping: number;
   reverb_mix: number;
-  delay_time_ms: number;
+
+  // Delay 
+  delay_time_beats: number;
   delay_feedback: number;
   delay_mix: number;
+  delay_bpm: number;
+
+  // Flanger
   flanger_rate: number;
   flanger_depth: number;
   flanger_feedback: number;
+
+  // Filter
   filter_resonance: number;
   filter_mode: "lowpass" | "highpass" | "bandpass";
+
+  // Roll
   roll_beats: number;
+  roll_bpm: number;
+
+  // Landing
+  landing_enabled: boolean;
+  landing_duration: number;
 }
 
 // ==================== DECK STATE ====================
@@ -67,7 +86,7 @@ export interface DeckState {
     bass: boolean;
     melody: boolean;
   };
-}
+} 
 
 export interface LibraryTrack {
   id: string;
@@ -77,4 +96,17 @@ export interface LibraryTrack {
   key: string;
   duration: string;
   path: string;
+}
+
+export interface LandingSettings {
+  duration: number;
+  amount: number;
+  beats?: number; 
+}
+
+export interface DeckLandingSettings {
+  echo: LandingSettings;
+  reverb: LandingSettings;
+  delay: LandingSettings;
+  roll: LandingSettings; 
 }

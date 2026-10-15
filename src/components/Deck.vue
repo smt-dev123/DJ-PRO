@@ -12,6 +12,7 @@ import type { DeckState, LibraryTrack, WaveBand } from "../types/dj";
 const props = defineProps<{
   deck: DeckState;
   color: "cyan" | "rose";
+  landingSettings?: any;
 }>();
 
 const emit = defineEmits<{
@@ -32,9 +33,10 @@ const emit = defineEmits<{
   (e: "fxType", fxType: string): void;
   (e: "fxAmount", amount: number): void;
   (e: "fxActive", active: boolean): void;
-  (e: "fxOut", fxType: "echo" | "reverb", duration: number): void;
+  (e: "fxOut", fxType: "echo" | "reverb" | "delay" | "roll", duration: number): void;
   (e: "cancelFxOut"): void;
   (e: "updateFxParams", params: any): void;
+  (e: "updateLandingSettings", fxType: "echo" | "reverb" | "delay" | "roll", settings: any): void;
 }>();
 
 type TabMode = "HOT CUE" | "LOOP" | "STEMS" | "FX";
@@ -338,7 +340,10 @@ function handleFxActive(active: boolean) {
   emit("fxActive", active);
 }
 
-function handleFxOut(fxType: "echo" | "reverb", duration: number) {
+function handleFxOut(
+  fxType: "echo" | "reverb" | "delay" | "roll",
+  duration: number,
+) {
   emit("fxOut", fxType, duration);
 }
 
@@ -559,12 +564,14 @@ function handleUpdateFxParams(params: any) {
           :fx-amount="deck.fxAmount || 0"
           :fx-active="deck.fxActive || false"
           :params="deck.fxParams || {}"
+          :landing-settings="landingSettings"
           @fx-type="handleFxType"
           @fx-amount="handleFxAmount"
           @fx-active="handleFxActive"
           @fx-out="handleFxOut"
           @cancel-fx-out="handleCancelFxOut"
           @update-params="handleUpdateFxParams"
+          @update-landing-settings="(fxType, settings) => emit('updateLandingSettings', fxType, settings)"
         />
       </div>
 

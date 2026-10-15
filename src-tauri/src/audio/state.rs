@@ -34,6 +34,10 @@ pub struct Deck {
     pub fx_out_progress: f32,   // 0.0 to 1.0
     pub fx_out_duration: f32,   // seconds
     pub fx_out_volume: f32,     // 1.0 → 0.0 multiplier
+    pub landing_active: bool,
+    pub landing_progress: f32,
+    pub landing_duration: f32,
+    pub landing_volume: f32,
 }
 
 impl Deck {
@@ -147,8 +151,8 @@ impl Default for MixerState {
             fx_b: FxState::default(),
             fx_type_a: FxType::None,
             fx_type_b: FxType::None,
-            fx_amount_a: 0.0,
-            fx_amount_b: 0.0,
+            fx_amount_a: 0.8,
+            fx_amount_b: 0.8,
             fx_active_a: false,
             fx_active_b: false,
             fx_params_a: FxParams::default(),
@@ -200,12 +204,10 @@ impl MixerState {
             "A" => {
                 self.fx_a.reset();
                 self.fx_active_a = false;
-                self.fx_amount_a = 0.0;
             }
             "B" => {
                 self.fx_b.reset();
                 self.fx_active_b = false;
-                self.fx_amount_b = 0.0;
             }
             _ => {}
         }
