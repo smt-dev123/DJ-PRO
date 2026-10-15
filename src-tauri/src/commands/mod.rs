@@ -51,6 +51,39 @@ pub async fn load_track_fast(
     app: AppHandle,
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<TrackLoadedFast, String> {
+     // ✅ Debug — បង្ហាញ path ពិត
+    println!("[Load] Deck {} → path: {:?}", deck_id, path);
+
+    // ✅ ពិនិត្យ file មានឬទេ
+    let path_obj = std::path::Path::new(&path);
+    if !path_obj.exists() {
+        eprintln!("[Load] ❌ File does NOT exist: {}", path);
+        return Err(format!("File not found: {}", path));
+    }
+
+    // ✅ ពិនិត្យ file size
+    let file_size = std::fs::metadata(path_obj)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    println!("[Load] File size: {} bytes", file_size);
+
+    if file_size < 1024 {
+        eprintln!("[Load] ❌ File too small ({} bytes) — not an audio file", file_size);
+        return Err(format!("File too small: {} bytes", file_size));
+    }
+
+    let path_clone = path.clone();
+    let decoded = tokio::task::spawn_blocking(move || decode_samples_only(&path_clone))
+        .await
+        .map_err(|e| e.to_string())??;
+
+    println!(
+        "[Load] ✅ Decoded: {} samples, {:.1}s, {}Hz",
+        decoded.samples.len(),
+        decoded.duration_secs,
+        decoded.sample_rate
+    );
+    
     let path_clone = path.clone();
     let decoded = tokio::task::spawn_blocking(move || decode_samples_only(&path_clone))
         .await

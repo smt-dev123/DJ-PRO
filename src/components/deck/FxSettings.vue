@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
-
-type FxType = "echo" | "reverb" | "delay" | "flanger" | "filter" | "roll";
+import { ref,  watch } from "vue";
 
 const props = defineProps<{
   fxType: string;
@@ -78,7 +76,7 @@ const FILTER_MODES = [
 <template>
   <div class="bg-[#0a0c14] border border-purple-500/40 rounded-lg p-2 shadow-xl">
     <!-- Header -->
-    <div class="flex items-center justify-between mb-2 pb-1.5 border-b border-purple-500/30">
+    <div class="z-10 flex items-center justify-between mb-2 pb-1.5 border-b border-purple-500/30">
       <span class="text-[9px] font-black text-purple-300 uppercase tracking-wider">
         ⚙ FX SETTINGS — {{ fxType.toUpperCase() }}
       </span>

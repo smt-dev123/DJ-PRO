@@ -143,16 +143,25 @@ const amountPercent = computed(() => Math.round(props.fxAmount * 100));
     </button>
 
     <!-- ✅ Settings Popup (overlay) -->
-    <div
-      v-if="showSettings"
-      class="absolute top-full left-0 right-0 mt-1 z-50"
-    >
-      <FxSettings
-        :fx-type="fxType"
-        :params="params"
-        @update="handleUpdateParams"
-        @close="showSettings = false"
-      />
-    </div>
+    <Teleport to="body">
+      <div
+        v-if="showSettings"
+        class="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+        @click.self="showSettings = false"
+      >
+        <!-- Backdrop -->
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+
+        <!-- Modal Content -->
+        <div class="relative z-10 w-[420px] max-h-[80vh] overflow-y-auto">
+          <FxSettings
+            :fx-type="fxType"
+            :params="params"
+            @update="handleUpdateParams"
+            @close="showSettings = false"
+          />
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

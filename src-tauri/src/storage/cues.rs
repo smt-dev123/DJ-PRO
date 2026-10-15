@@ -1,6 +1,6 @@
 use super::cache::StorageCache;
 use super::paths::{atomic_write, cues_path};
-use super::types::{CuesDatabase, HotCue, SavedLoop, TrackCues};
+use super::types::{CuesDatabase, HotCue, TrackCues};
 use std::fs;
 
 pub fn load_cues(

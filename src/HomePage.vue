@@ -185,7 +185,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ================= 3. HARDWARE CONSOLE (DECK A | MIXER | DECK B) ================= -->
-    <main class="flex items-stretch gap-2.5 mb-2.5 h-[340px] shrink-0">
+    <main class="flex items-stretch gap-2.5 mb-2.5 min-h-[340px] shrink-0">
       <!-- Deck A (Left) -->
       <Deck
         ref="deckARef"
