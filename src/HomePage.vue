@@ -20,13 +20,21 @@ const {
   triggerCue,
   syncDeck,
   toggleKeyLock,
+  triggerHotCue,
+  toggleLoop,
+  toggleStem,
   setVolume,
-  setDeckEq,      
+  setDeckEq,
   setDeckGain,
+  setDeckFxType,
+  setDeckFxAmount,
+  setDeckFxActive,
   setPitch,
   nudgePitch,
   resetPitch,
   setCrossfader,
+  triggerFxOut,
+  cancelFxOut,
 } = useDjEngine();
 
 const deckARef = ref<any>(null);
@@ -184,6 +192,8 @@ onUnmounted(() => {
         class="flex-1 min-w-0"
         :deck="deckA"
         color="cyan"
+        @fx-out="(fxType, duration) => triggerFxOut('A', fxType, duration)"
+        @cancel-fx-out="cancelFxOut('A')"
         @open="openTrack('A')"
         @play="togglePlay('A')"
         @cue="triggerCue('A')"
@@ -195,6 +205,12 @@ onUnmounted(() => {
         @load-track="loadDirectTrack('A', $event)"
         @load-file="loadFileToDeck('A', $event)"
         @seek="seekDeck('A', $event)"
+        @hot-cue="triggerHotCue('A', $event)"
+        @toggle-loop="toggleLoop('A', $event)"
+        @toggle-stem="(stem, active) => toggleStem('A', stem, active)"
+        @fx-type="setDeckFxType('A', $event)"
+        @fx-amount="setDeckFxAmount('A', $event)"
+        @fx-active="setDeckFxActive('A', $event)"
       />
 
       <!-- Center Hardware Mixer -->
@@ -219,6 +235,8 @@ onUnmounted(() => {
         class="flex-1 min-w-0"
         :deck="deckB"
         color="rose"
+        @fx-out="(fxType, duration) => triggerFxOut('B', fxType, duration)"
+        @cancel-fx-out="cancelFxOut('B')"
         @open="openTrack('B')"
         @play="togglePlay('B')"
         @cue="triggerCue('B')"
@@ -230,6 +248,12 @@ onUnmounted(() => {
         @load-track="loadDirectTrack('B', $event)"
         @load-file="loadFileToDeck('B', $event)"
         @seek="seekDeck('B', $event)"
+        @hot-cue="triggerHotCue('B', $event)"
+        @toggle-loop="toggleLoop('B', $event)"
+        @toggle-stem="(stem, active) => toggleStem('B', stem, active)"
+        @fx-type="setDeckFxType('B', $event)"
+        @fx-amount="setDeckFxAmount('B', $event)"
+        @fx-active="setDeckFxActive('B', $event)"
       />
     </main>
 

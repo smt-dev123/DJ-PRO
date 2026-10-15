@@ -1,13 +1,33 @@
 export type DeckId = "A" | "B";
 
 export interface WaveformPeak {
-  low: number;   // < 250 Hz (Bass / Kick drum) - Normalized 0.0 to 1.0
-  mid: number;   // 250 Hz - 4000 Hz (Vocals / Snares)
-  high: number;  // > 4000 Hz (Hi-hats / Air)
+  low: number; // < 250 Hz (Bass / Kick drum) - Normalized 0.0 to 1.0
+  mid: number; // 250 Hz - 4000 Hz (Vocals / Snares)
+  high: number; // > 4000 Hz (Hi-hats / Air)
 }
 
 export type WaveBand = WaveformPeak;
 
+// ==================== FX PARAMS ====================
+export interface FxParams {
+  echo_time_beats: number;
+  echo_feedback: number;
+  echo_mix: number;
+  reverb_decay: number;
+  reverb_damping: number;
+  reverb_mix: number;
+  delay_time_ms: number;
+  delay_feedback: number;
+  delay_mix: number;
+  flanger_rate: number;
+  flanger_depth: number;
+  flanger_feedback: number;
+  filter_resonance: number;
+  filter_mode: "lowpass" | "highpass" | "bandpass";
+  roll_beats: number;
+}
+
+// ==================== DECK STATE ====================
 export interface DeckState {
   id: "A" | "B";
   isPlaying: boolean;
@@ -21,17 +41,32 @@ export interface DeckState {
   artist: string;
   key: string;
   status: string;
-  eqHigh: number; 
-  eqMid: number;  
-  eqLow: number;  
-  filter: number; 
-  gain: number;   
+  eqHigh: number;
+  eqMid: number;
+  eqLow: number;
+  filter: number;
+  gain: number;
   keyLock: boolean;
   isSynced: boolean;
   cueActive: boolean;
   progress: number;
   waveform: WaveformPeak[];
   durationSecs: number;
+
+  // ✅ FX fields — ត្រូវមានទាំងអស់
+  fxType: "none" | "echo" | "reverb" | "delay" | "flanger" | "filter" | "roll";
+  fxAmount: number;
+  fxActive: boolean;
+  fxParams: FxParams;  // ✅ បន្ថែមបន្ទាត់នេះ!
+
+  // Optional
+  activeLoop?: string | null;
+  stems?: {
+    vocal: boolean;
+    drum: boolean;
+    bass: boolean;
+    melody: boolean;
+  };
 }
 
 export interface LibraryTrack {

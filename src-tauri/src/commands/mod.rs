@@ -1,12 +1,12 @@
+use crate::audio::decoder::{decode_samples_only, extract_waveform_progressive};
+use crate::audio::fx::{FilterMode, FxParams, FxType};
+use crate::audio::state::MixerState;
+use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use serde::Serialize;
-use tauri::{State, AppHandle, Emitter};
-use crate::audio::state::MixerState;
-use crate::audio::decoder::{
-    decode_samples_only, extract_waveform_progressive,
-};
+use tauri::{AppHandle, Emitter, State};
 
 #[derive(Serialize)]
 pub struct FileTrackItem {
@@ -63,7 +63,11 @@ pub async fn load_track_fast(
 
     {
         let mut lock = state.lock().map_err(|e| e.to_string())?;
-        let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+        let deck = if deck_id == "A" {
+            &mut lock.deck_a
+        } else {
+            &mut lock.deck_b
+        };
 
         deck.samples = decoded.samples;
         deck.position = 0;
@@ -101,8 +105,17 @@ pub async fn load_track_fast(
                 Ok(g) => g,
                 Err(_) => return,
             };
-            let deck = if deck_id_analysis == "A" { &lock.deck_a } else { &lock.deck_b };
-            (deck.samples.clone(), deck.sample_rate, deck.channels, deck.duration_secs)
+            let deck = if deck_id_analysis == "A" {
+                &lock.deck_a
+            } else {
+                &lock.deck_b
+            };
+            (
+                deck.samples.clone(),
+                deck.sample_rate,
+                deck.channels,
+                deck.duration_secs,
+            )
         };
 
         let total_chunks = 10;
@@ -133,7 +146,11 @@ pub async fn load_track_fast(
                 Ok(g) => g,
                 Err(_) => return,
             };
-            let deck = if deck_id_analysis == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+            let deck = if deck_id_analysis == "A" {
+                &mut lock.deck_a
+            } else {
+                &mut lock.deck_b
+            };
             deck.waveform_peaks = peaks;
             deck.waveform_ready = true;
         }
@@ -161,7 +178,11 @@ pub fn seek_deck(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<f32, String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+    let deck = if deck_id == "A" {
+        &mut lock.deck_a
+    } else {
+        &mut lock.deck_b
+    };
     deck.seek_ratio(ratio);
     Ok(deck.get_progress_ratio())
 }
@@ -172,7 +193,11 @@ pub fn get_deck_playback(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<DeckPlaybackStatus, String> {
     let lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" { &lock.deck_a } else { &lock.deck_b };
+    let deck = if deck_id == "A" {
+        &lock.deck_a
+    } else {
+        &lock.deck_b
+    };
     let progress = deck.get_progress_ratio();
     let elapsed = deck.get_elapsed_secs();
     let total = deck.duration_secs;
@@ -197,7 +222,11 @@ pub fn toggle_play(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<bool, String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+    let deck = if deck_id == "A" {
+        &mut lock.deck_a
+    } else {
+        &mut lock.deck_b
+    };
     deck.is_playing = !deck.is_playing;
     Ok(deck.is_playing)
 }
@@ -210,7 +239,11 @@ pub fn set_deck_volume(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<(), String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+    let deck = if deck_id == "A" {
+        &mut lock.deck_a
+    } else {
+        &mut lock.deck_b
+    };
     deck.volume = vol.clamp(0.0, 1.0);
     Ok(())
 }
@@ -226,7 +259,11 @@ pub fn set_deck_eq(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<(), String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+    let deck = if deck_id == "A" {
+        &mut lock.deck_a
+    } else {
+        &mut lock.deck_b
+    };
     deck.eq_high = high.clamp(-100.0, 100.0);
     deck.eq_mid = mid.clamp(-100.0, 100.0);
     deck.eq_low = low.clamp(-100.0, 100.0);
@@ -241,16 +278,17 @@ pub fn set_deck_gain(
     state: State<'_, Arc<Mutex<MixerState>>>,
 ) -> Result<(), String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
-    let deck = if deck_id == "A" { &mut lock.deck_a } else { &mut lock.deck_b };
+    let deck = if deck_id == "A" {
+        &mut lock.deck_a
+    } else {
+        &mut lock.deck_b
+    };
     deck.gain = gain.clamp(-100.0, 100.0);
     Ok(())
 }
 
 #[tauri::command]
-pub fn set_crossfader(
-    val: f32,
-    state: State<'_, Arc<Mutex<MixerState>>>,
-) -> Result<(), String> {
+pub fn set_crossfader(val: f32, state: State<'_, Arc<Mutex<MixerState>>>) -> Result<(), String> {
     let mut lock = state.lock().map_err(|e| e.to_string())?;
     lock.crossfader = val.clamp(0.0, 1.0);
     Ok(())
@@ -325,4 +363,305 @@ pub fn scan_folder_tracks(folder_path: String) -> Result<Vec<FileTrackItem>, Str
         }
     }
     Ok(tracks)
+}
+
+#[tauri::command]
+pub fn set_deck_fx_type(
+    deck_id: String,
+    fx_type: String,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let fx = match fx_type.as_str() {
+        "echo" => FxType::Echo,
+        "reverb" => FxType::Reverb,
+        "delay" => FxType::Delay,
+        "flanger" => FxType::Flanger,
+        "filter" => FxType::Filter,
+        "roll" => FxType::Roll,
+        _ => FxType::None,
+    };
+    if deck_id == "A" {
+        lock.fx_type_a = fx;
+    } else {
+        lock.fx_type_b = fx;
+    }
+    Ok(())
+}
+
+// ✅ Set FX amount (0.0 to 1.0)
+#[tauri::command]
+pub fn set_deck_fx_amount(
+    deck_id: String,
+    amount: f32,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let amount = amount.clamp(0.0, 1.0);
+    if deck_id == "A" {
+        lock.fx_amount_a = amount;
+    } else {
+        lock.fx_amount_b = amount;
+    }
+    Ok(())
+}
+
+// ✅ Enable/Disable FX
+#[tauri::command]
+pub fn set_deck_fx_active(
+    deck_id: String,
+    active: bool,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    if deck_id == "A" {
+        lock.fx_active_a = active;
+        if !active {
+            lock.fx_a.reset();
+        }
+    } else {
+        lock.fx_active_b = active;
+        if !active {
+            lock.fx_b.reset();
+        }
+    }
+    Ok(())
+}
+
+// ✅ Reset FX buffer
+#[tauri::command]
+pub fn reset_deck_fx(
+    deck_id: String,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    if deck_id == "A" {
+        lock.fx_a.reset();
+    } else {
+        lock.fx_b.reset();
+    }
+    Ok(())
+}
+
+// ✅ Hot Cue storage (in-memory)
+pub struct HotCueStore {
+    pub cues: HashMap<String, [f32; 4]>, // deck_id → [pos1, pos2, pos3, pos4]
+}
+
+// ✅ Loop state
+pub struct LoopState {
+    pub active_loop: Option<(f32, f32)>, // start_ratio, end_ratio
+}
+
+#[tauri::command]
+pub fn trigger_hot_cue(
+    deck_id: String,
+    pad: usize,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<f32, String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let deck = if deck_id == "A" {
+        &mut lock.deck_a
+    } else {
+        &mut lock.deck_b
+    };
+
+    // Default cue positions
+    let positions = [0.05, 0.28, 0.52, 0.78];
+    let pos = positions.get(pad - 1).copied().unwrap_or(0.0);
+    deck.seek_ratio(pos);
+    Ok(pos)
+}
+
+#[tauri::command]
+pub fn toggle_loop(deck_id: String, beats: String) -> Result<Option<(f32, f32)>, String> {
+    // TODO: Implement actual looping
+    println!("[Loop] Deck {} — {} beats", deck_id, beats);
+    Ok(None)
+}
+
+#[tauri::command]
+pub fn toggle_stem(
+    deck_id: String,
+    stem: String,
+    active: bool,
+    _state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    println!("[Stem] Deck {} — {} = {}", deck_id, stem, active);
+    Ok(())
+}
+
+// ✅ Echo Out / Reverb Out — Auto fade
+#[tauri::command]
+pub fn trigger_fx_out(
+    deck_id: String,
+    fx_type: String,    // "echo" or "reverb"
+    duration_secs: f32, // e.g. 2.0 seconds
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+
+    let fx = match fx_type.as_str() {
+        "echo" => FxType::Echo,
+        "reverb" => FxType::Reverb,
+        _ => return Err("Invalid FX type".into()),
+    };
+
+    if deck_id == "A" {
+        lock.fx_type_a = fx;
+        lock.fx_active_a = true;
+        lock.fx_amount_a = 0.0;
+        lock.deck_a.fx_out_active = true;
+        lock.deck_a.fx_out_progress = 0.0;
+        lock.deck_a.fx_out_duration = duration_secs.max(0.5);
+        lock.deck_a.fx_out_volume = 1.0;
+    } else {
+        lock.fx_type_b = fx;
+        lock.fx_active_b = true;
+        lock.fx_amount_b = 0.0;
+        lock.deck_b.fx_out_active = true;
+        lock.deck_b.fx_out_progress = 0.0;
+        lock.deck_b.fx_out_duration = duration_secs.max(0.5);
+        lock.deck_b.fx_out_volume = 1.0;
+    }
+
+    println!(
+        "[FX Out] Deck {} — {} for {:.1}s",
+        deck_id, fx_type, duration_secs
+    );
+    Ok(())
+}
+
+// ✅ Cancel FX Out
+#[tauri::command]
+pub fn cancel_fx_out(
+    deck_id: String,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    if deck_id == "A" {
+        lock.deck_a.fx_out_active = false;
+        lock.deck_a.fx_out_volume = 1.0;
+        lock.fx_active_a = false;
+        lock.fx_amount_a = 0.0;
+    } else {
+        lock.deck_b.fx_out_active = false;
+        lock.deck_b.fx_out_volume = 1.0;
+        lock.fx_active_b = false;
+        lock.fx_amount_b = 0.0;
+    }
+    Ok(())
+}
+
+// ==================== FX PARAMS COMMANDS ====================
+
+#[tauri::command]
+pub fn set_fx_params(
+    deck_id: String,
+    // Echo
+    echo_time_beats: Option<f32>,
+    echo_feedback: Option<f32>,
+    echo_mix: Option<f32>,
+    // Reverb
+    reverb_decay: Option<f32>,
+    reverb_damping: Option<f32>,
+    reverb_mix: Option<f32>,
+    // Delay
+    delay_time_ms: Option<f32>,
+    delay_feedback: Option<f32>,
+    delay_mix: Option<f32>,
+    // Flanger
+    flanger_rate: Option<f32>,
+    flanger_depth: Option<f32>,
+    flanger_feedback: Option<f32>,
+    // Filter
+    filter_resonance: Option<f32>,
+    filter_mode: Option<String>,
+    // Roll
+    roll_beats: Option<f32>,
+    // BPM
+    bpm: Option<f32>,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<(), String> {
+    let mut lock = state.lock().map_err(|e| e.to_string())?;
+    let params = if deck_id == "A" {
+        &mut lock.fx_params_a
+    } else {
+        &mut lock.fx_params_b
+    };
+
+    if let Some(v) = echo_time_beats {
+        params.echo_time_beats = v.clamp(0.0625, 4.0);
+    }
+    if let Some(v) = echo_feedback {
+        params.echo_feedback = v.clamp(0.0, 0.95);
+    }
+    if let Some(v) = echo_mix {
+        params.echo_mix = v.clamp(0.0, 1.0);
+    }
+
+    if let Some(v) = reverb_decay {
+        params.reverb_decay = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = reverb_damping {
+        params.reverb_damping = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = reverb_mix {
+        params.reverb_mix = v.clamp(0.0, 1.0);
+    }
+
+    if let Some(v) = delay_time_ms {
+        params.delay_time_ms = v.clamp(10.0, 2000.0);
+    }
+    if let Some(v) = delay_feedback {
+        params.delay_feedback = v.clamp(0.0, 0.95);
+    }
+    if let Some(v) = delay_mix {
+        params.delay_mix = v.clamp(0.0, 1.0);
+    }
+
+    if let Some(v) = flanger_rate {
+        params.flanger_rate = v.clamp(0.1, 5.0);
+    }
+    if let Some(v) = flanger_depth {
+        params.flanger_depth = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = flanger_feedback {
+        params.flanger_feedback = v.clamp(0.0, 0.9);
+    }
+
+    if let Some(v) = filter_resonance {
+        params.filter_resonance = v.clamp(0.1, 10.0);
+    }
+    if let Some(m) = filter_mode {
+        params.filter_mode = match m.as_str() {
+            "highpass" => FilterMode::HighPass,
+            "bandpass" => FilterMode::BandPass,
+            _ => FilterMode::LowPass,
+        };
+    }
+
+    if let Some(v) = roll_beats {
+        params.roll_beats = v.clamp(0.0625, 4.0);
+    }
+    if let Some(v) = bpm {
+        params.echo_bpm = v.clamp(60.0, 200.0);
+        params.roll_bpm = v.clamp(60.0, 200.0);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_fx_params(
+    deck_id: String,
+    state: State<'_, Arc<Mutex<MixerState>>>,
+) -> Result<FxParams, String> {
+    let lock = state.lock().map_err(|e| e.to_string())?;
+    let params = if deck_id == "A" {
+        lock.fx_params_a
+    } else {
+        lock.fx_params_b
+    };
+    Ok(params)
 }
